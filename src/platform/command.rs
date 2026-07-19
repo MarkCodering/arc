@@ -8,7 +8,6 @@ pub trait CommandRunner {
     fn run(&self, command: &CommandSpec) -> Result<()>;
 }
 
-#[derive(Clone, Copy, Debug, Default)]
 pub struct SystemCommandRunner;
 
 impl CommandRunner for SystemCommandRunner {

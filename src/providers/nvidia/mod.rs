@@ -16,7 +16,6 @@ pub mod repository;
 pub mod toolkit;
 pub mod uninstall;
 
-#[derive(Clone, Copy, Debug, Default)]
 pub struct NvidiaProvider;
 
 impl AcceleratorProvider for NvidiaProvider {

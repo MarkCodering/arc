@@ -13,7 +13,6 @@ const CUDA_KEYRING_PATH: &str = "/tmp/cuda-keyring_1.1-1_all.deb";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NvidiaRepository {
     pub distro: String,
-    pub architecture: String,
     pub base_url: String,
 }
 
@@ -64,11 +63,7 @@ pub fn resolve(os: &OsInfo) -> Result<NvidiaRepository> {
     let base_url = format!(
         "https://developer.download.nvidia.com/compute/cuda/repos/{distro}/{architecture}/"
     );
-    Ok(NvidiaRepository {
-        distro,
-        architecture: architecture.to_owned(),
-        base_url,
-    })
+    Ok(NvidiaRepository { distro, base_url })
 }
 
 pub fn is_configured(os: &OsInfo, repository: &NvidiaRepository) -> Result<bool> {

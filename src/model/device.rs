@@ -3,9 +3,10 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GpuVendor {
     Nvidia,
+    #[expect(dead_code, reason = "reserved for the planned AMD provider")]
     Amd,
+    #[expect(dead_code, reason = "reserved for the planned Intel provider")]
     Intel,
-    Unknown,
 }
 
 impl fmt::Display for GpuVendor {
@@ -14,7 +15,6 @@ impl fmt::Display for GpuVendor {
             Self::Nvidia => "NVIDIA",
             Self::Amd => "AMD",
             Self::Intel => "Intel",
-            Self::Unknown => "Unknown",
         })
     }
 }
