@@ -49,11 +49,7 @@ pub fn system_status(os: &OsInfo, providers: &[ProviderStatus]) {
         println!(
             "\n{} Driver package:\n{}",
             status.vendor,
-            if status.driver_installed {
-                "Installed"
-            } else {
-                "Not installed"
-            }
+            status.driver.description()
         );
         println!(
             "\n{} Driver runtime:\n{}",

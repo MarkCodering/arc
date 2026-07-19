@@ -24,7 +24,8 @@ pub fn run(args: InstallArgs) -> Result<()> {
             DriverMode::Proprietary => DriverPreference::Proprietary,
         },
     };
-    let plan = install::plan(&os::detect()?, &options)?;
+    let mut plan = install::plan(&os::detect()?, &options)?;
+    command::normalize_for_current_user(&mut plan);
     output::operation_plan(&plan);
 
     if args.dry_run {
@@ -39,6 +40,7 @@ pub fn run(args: InstallArgs) -> Result<()> {
         println!("\nInstallation cancelled. No changes were made.");
         return Ok(());
     }
+    command::ensure_execution_privileges(&plan)?;
     command::execute_plan(&command::SystemCommandRunner, &plan)?;
     output::operation_completed(&plan);
     Ok(())

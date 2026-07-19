@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use crate::model::command::CommandSpec;
 
 const LATEST_TOOLKIT_PACKAGE: &str = "cuda-toolkit";
+pub const LATEST_TOOLKIT_VERSION: &str = "13.3";
 
 pub fn package(version: Option<&str>) -> Result<String> {
     match version {

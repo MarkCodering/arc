@@ -2,10 +2,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
-use crate::model::{
-    command::CommandSpec,
-    system::{OsInfo, PackageManager},
-};
+use crate::model::{command::CommandSpec, system::PackageManager};
 
 pub fn refresh_command(manager: PackageManager) -> CommandSpec {
     match manager {
@@ -33,15 +30,6 @@ pub fn install_command(manager: PackageManager, package: &str) -> CommandSpec {
     install_command_with_options(manager, package, false)
 }
 
-pub fn kernel_headers_install_command(os: &OsInfo, kernel_release: &str) -> CommandSpec {
-    let package = match os.package_manager() {
-        PackageManager::AptGet => format!("linux-headers-{kernel_release}"),
-        PackageManager::Dnf | PackageManager::Tdnf => format!("kernel-devel-{kernel_release}"),
-        PackageManager::Zypper => "kernel-devel".to_owned(),
-    };
-    install_command(os.package_manager(), &package)
-}
-
 pub fn install_command_with_options(
     manager: PackageManager,
     package: &str,
@@ -57,20 +45,6 @@ pub fn install_command_with_options(
         PackageManager::Zypper => {
             CommandSpec::sudo("zypper", ["--non-interactive", "install", package])
         }
-    }
-}
-
-pub fn reinstall_command(manager: PackageManager, package: &str) -> CommandSpec {
-    match manager {
-        PackageManager::AptGet => {
-            CommandSpec::sudo("apt-get", ["install", "--reinstall", "-y", package])
-        }
-        PackageManager::Dnf => CommandSpec::sudo("dnf", ["reinstall", "-y", package]),
-        PackageManager::Tdnf => CommandSpec::sudo("tdnf", ["reinstall", "-y", package]),
-        PackageManager::Zypper => CommandSpec::sudo(
-            "zypper",
-            ["--non-interactive", "install", "--force", package],
-        ),
     }
 }
 
@@ -94,7 +68,7 @@ pub fn is_installed(manager: PackageManager, package: &str) -> Result<bool> {
 
 pub fn apt_remove_command(options: &[&str], packages: &[&str]) -> CommandSpec {
     CommandSpec::sudo(
-        "apt",
+        "apt-get",
         options.iter().copied().chain(packages.iter().copied()),
     )
 }

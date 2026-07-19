@@ -4,6 +4,47 @@ use anyhow::{Context, Result, bail};
 
 use crate::model::{command::CommandSpec, operation::OperationPlan};
 
+pub fn normalize_for_current_user(plan: &mut OperationPlan) {
+    if !running_as_root() {
+        return;
+    }
+    for step in &mut plan.steps {
+        if step.command.program == "sudo" && !step.command.args.is_empty() {
+            step.command.program = step.command.args.remove(0);
+        }
+    }
+}
+
+pub fn ensure_execution_privileges(plan: &OperationPlan) -> Result<()> {
+    ensure_execution_privileges_with(
+        plan,
+        running_as_root(),
+        Command::new("sudo").arg("--version").output().is_ok(),
+    )
+}
+
+fn ensure_execution_privileges_with(
+    plan: &OperationPlan,
+    running_as_root: bool,
+    sudo_available: bool,
+) -> Result<()> {
+    if running_as_root || !plan.steps.iter().any(|step| step.command.program == "sudo") {
+        return Ok(());
+    }
+    if !sudo_available {
+        bail!(
+            "This plan requires administrative privileges, but cudaenv is not running as root and sudo is unavailable. Run cudaenv as your normal user after installing sudo, or use a root shell."
+        );
+    }
+    Ok(())
+}
+
+fn running_as_root() -> bool {
+    Command::new("id").arg("-u").output().is_ok_and(|output| {
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "0"
+    })
+}
+
 pub trait CommandRunner {
     fn run(&self, command: &CommandSpec) -> Result<()>;
 }
@@ -72,5 +113,48 @@ mod tests {
         execute_plan(&runner, &plan).unwrap();
 
         assert_eq!(*runner.commands.borrow(), vec![expected]);
+    }
+
+    #[test]
+    fn root_normalization_preserves_the_exact_typed_command() {
+        let mut plan = OperationPlan {
+            title: "Test".into(),
+            details: vec![],
+            devices: vec![],
+            steps: vec![PlanStep::new(
+                "privileged",
+                CommandSpec::sudo("apt-get", ["update"]),
+            )],
+            confirmation_warning: String::new(),
+            completion_message: String::new(),
+            reboot_message: None,
+        };
+        if running_as_root() {
+            normalize_for_current_user(&mut plan);
+            assert_eq!(plan.steps[0].command.display(), "apt-get update");
+        }
+    }
+
+    #[test]
+    fn missing_sudo_fails_before_any_command_runs() {
+        let plan = OperationPlan {
+            title: "Test".into(),
+            details: vec![],
+            devices: vec![],
+            steps: vec![PlanStep::new(
+                "privileged",
+                CommandSpec::sudo("apt-get", ["update"]),
+            )],
+            confirmation_warning: String::new(),
+            completion_message: String::new(),
+            reboot_message: None,
+        };
+        assert!(
+            ensure_execution_privileges_with(&plan, false, false)
+                .unwrap_err()
+                .to_string()
+                .contains("sudo is unavailable")
+        );
+        assert!(ensure_execution_privileges_with(&plan, true, false).is_ok());
     }
 }

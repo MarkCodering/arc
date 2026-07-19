@@ -1,17 +1,21 @@
-use anyhow::{Result, bail};
+use std::process::Command;
+
+use anyhow::{Context, Result, bail};
 
 use crate::{
     model::{
-        environment::ProviderStatus,
+        environment::{DriverFlavorState, DriverInstallation, ProviderStatus},
         operation::{OperationPlan, PlanDetail, PlanStep},
-        system::{Distribution, OsInfo},
+        system::OsInfo,
     },
     platform::package_manager,
     providers::nvidia::{
-        driver::{self, DriverFlavor, DriverPreference},
+        compatibility::{self, Compatibility},
+        driver::{DriverFlavor, DriverPreference},
         gpu::{self, NvidiaGpu},
+        policy, recipe,
         repository::{self, NvidiaRepository},
-        toolkit,
+        state, toolkit,
     },
 };
 
@@ -20,7 +24,6 @@ pub enum InstallProfile {
     ModelTraining,
     CudaDevelopment,
 }
-
 impl InstallProfile {
     pub fn label(self) -> &'static str {
         match self {
@@ -37,206 +40,241 @@ pub struct InstallOptions {
     pub driver: DriverPreference,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct PackageState {
-    open_driver: bool,
-    proprietary_driver: bool,
-    toolkit: bool,
-}
-
 pub fn plan(os: &OsInfo, options: &InstallOptions) -> Result<OperationPlan> {
     os.ensure_driver_installable("NVIDIA")?;
+    let kernel = kernel_release()?;
     let gpus = gpu::detect()?;
-    if gpus.is_empty() {
-        bail!("No NVIDIA GPU was detected. Check that the GPU is visible and try again.");
-    }
+    let status = state::inspect(os)?;
     let repository = repository::resolve(os)?;
     let repository_configured = repository::is_configured(os, &repository)?;
-    let status = ProviderStatus {
-        vendor: crate::model::device::GpuVendor::Nvidia,
-        devices: gpus.clone().into_iter().map(Into::into).collect(),
-        driver_installed: false,
-        driver_version: driver::detect_version()?,
-        toolkits: toolkit::detect_version()?
-            .map(|version| crate::model::environment::ToolkitStatus {
-                name: "CUDA Toolkit".into(),
-                version,
-            })
-            .into_iter()
-            .collect(),
-    };
-    let manager = os.package_manager();
-    let requested_toolkit = match options.profile {
-        InstallProfile::ModelTraining => None,
-        InstallProfile::CudaDevelopment => {
-            Some(toolkit::package(options.toolkit_version.as_deref())?)
-        }
-    };
-    let packages = PackageState {
-        open_driver: package_manager::is_installed(manager, DriverFlavor::Open.package())?,
-        proprietary_driver: package_manager::is_installed(
-            manager,
-            DriverFlavor::Proprietary.package(),
-        )?,
-        toolkit: match requested_toolkit.as_deref() {
-            Some(package) => package_manager::is_installed(manager, package)?,
-            None => false,
-        },
-    };
-    let mut status = status;
-    status.driver_installed = packages.open_driver || packages.proprietary_driver;
+    let requested_toolkit = requested_toolkit(options)?;
+    let toolkit_installed = requested_toolkit
+        .as_deref()
+        .is_some_and(|p| package_manager::is_installed(os.package_manager(), p).unwrap_or(false));
     build_plan(
         os,
         options,
+        &kernel,
         &gpus,
         &status,
         &repository,
         repository_configured,
-        packages,
+        toolkit_installed,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_plan(
     os: &OsInfo,
     options: &InstallOptions,
+    kernel: &str,
     gpus: &[NvidiaGpu],
     status: &ProviderStatus,
     repository: &NvidiaRepository,
     repository_configured: bool,
-    packages: PackageState,
+    toolkit_package_installed: bool,
 ) -> Result<OperationPlan> {
-    let manager = os.package_manager();
-    let flavor = match (
+    let cuda_development = options.profile == InstallProfile::CudaDevelopment;
+    let policy = policy::resolve(
+        os,
+        gpus,
         options.driver,
-        packages.open_driver,
-        packages.proprietary_driver,
-    ) {
-        (DriverPreference::Auto, true, false) => DriverFlavor::Open,
-        (DriverPreference::Auto, false, true) => DriverFlavor::Proprietary,
-        _ => driver::select(options.driver, gpus)?,
-    };
-    if os.distribution == Distribution::AzureLinux && flavor == DriverFlavor::Proprietary {
-        bail!("Azure Linux supports only NVIDIA open kernel modules; use --driver open.");
+        options.toolkit_version.as_deref(),
+        cuda_development,
+    )?;
+    let recipe = recipe::resolve(os, kernel, policy)?;
+    if let DriverInstallation::Unmanaged {
+        working,
+        runfile_likely,
+    } = status.driver
+    {
+        bail!(
+            "A{} unmanaged NVIDIA driver installation was detected{}. cudaenv will not install repository packages over it. Remove it with its original installer or migrate it to distribution packages first.",
+            if working { " working" } else { " broken" },
+            if runfile_likely {
+                " (likely installed by the NVIDIA runfile)"
+            } else {
+                ""
+            }
+        );
     }
-    let toolkit_package = match options.profile {
-        InstallProfile::ModelTraining => None,
-        InstallProfile::CudaDevelopment => {
-            Some(toolkit::package(options.toolkit_version.as_deref())?)
-        }
+    if matches!(status.driver, DriverInstallation::BrokenManaged { .. }) {
+        bail!(
+            "The installed NVIDIA packages are broken or not operational. Run `cudaenv doctor` and repair or remove the managed installation before changing driver flavor or branch."
+        );
+    }
+    if status.driver.flavor() == Some(DriverFlavorState::Mixed) {
+        bail!(
+            "Conflicting open and proprietary NVIDIA packages are installed. Repair or remove the mixed package installation before using cudaenv install."
+        );
+    }
+    let target_state = match policy.flavor {
+        DriverFlavor::Open => DriverFlavorState::Open,
+        DriverFlavor::Proprietary => DriverFlavorState::Proprietary,
     };
-    let current_toolkit = status
-        .toolkits
-        .first()
-        .map(|toolkit| toolkit.version.as_str());
-    let selected_driver_installed = match flavor {
-        DriverFlavor::Open => packages.open_driver,
-        DriverFlavor::Proprietary => packages.proprietary_driver,
+    let current_flavor = status.driver.flavor().and_then(|value| match value {
+        DriverFlavorState::Open => Some(DriverFlavor::Open),
+        DriverFlavorState::Proprietary => Some(DriverFlavor::Proprietary),
+        DriverFlavorState::Mixed => None,
+    });
+    let branch_matches = policy.branch.is_none()
+        || matches!(&status.driver, DriverInstallation::Managed { branch: Some(branch), .. } if Some(*branch) == policy.branch);
+    let requested_toolkit_version = if cuda_development {
+        Some(
+            options
+                .toolkit_version
+                .as_deref()
+                .unwrap_or(toolkit::LATEST_TOOLKIT_VERSION),
+        )
+    } else {
+        None
     };
-    let other_driver_installed = match flavor {
-        DriverFlavor::Open => packages.proprietary_driver,
-        DriverFlavor::Proprietary => packages.open_driver,
-    };
-    let install_driver = !selected_driver_installed;
-    let install_toolkit = toolkit_package
+    let driver_compatible = status
+        .driver_version
         .as_deref()
-        .is_some_and(|package| toolkit_install_needed(package, current_toolkit, packages.toolkit));
+        .zip(requested_toolkit_version)
+        .and_then(|(driver, toolkit)| compatibility::evaluate(driver, toolkit))
+        != Some(Compatibility::Incompatible);
+    let driver_correct = matches!(status.driver, DriverInstallation::Managed { .. })
+        && status.driver.flavor() == Some(target_state)
+        && branch_matches
+        && driver_compatible;
+    let branch_transition = policy.branch.is_some()
+        && matches!(&status.driver, DriverInstallation::Managed { branch, .. } if *branch != policy.branch);
+    let transition = current_flavor.is_some_and(|from| from != policy.flavor) || branch_transition;
+    let toolkit_package = requested_toolkit(options)?;
+    let current_toolkit = status.toolkits.first().map(|value| value.version.as_str());
+    let install_toolkit = toolkit_package.as_deref().is_some_and(|package| {
+        toolkit_install_needed(package, current_toolkit, toolkit_package_installed)
+    });
+    let install_driver = !driver_correct;
     let mut steps = Vec::new();
     if install_driver || install_toolkit {
         if !repository_configured {
+            if !repository::downloader_available() {
+                bail!(
+                    "Configuring the NVIDIA repository requires curl or wget, but neither command is available."
+                );
+            }
             steps.extend(
-                repository::setup_commands(manager, repository)
+                repository::setup_commands(os.package_manager(), repository)
                     .into_iter()
                     .map(|command| PlanStep::new("Configure the NVIDIA CUDA repository", command)),
             );
         }
         steps.push(PlanStep::new(
             "Refresh package metadata",
-            package_manager::refresh_command(manager),
+            package_manager::refresh_command(os.package_manager()),
         ));
-        if install_toolkit && let Some(package) = toolkit_package.as_deref() {
-            steps.push(PlanStep::new(
-                format!("Verify CUDA Toolkit package {package} is available"),
-                package_manager::query_command(manager, package),
-            ));
-        }
-        if install_driver {
+    }
+    if install_driver {
+        steps.extend(
+            recipe
+                .prerequisites
+                .into_iter()
+                .map(|command| PlanStep::new("Ensure NVIDIA driver prerequisites", command)),
+        );
+        steps.push(PlanStep::new(
+            "Refresh package metadata after ensuring prerequisites",
+            package_manager::refresh_command(os.package_manager()),
+        ));
+        if let Some(from) = current_flavor {
             steps.extend(
-                driver::preparation_commands(os, flavor)
+                recipe::transition_commands(os, policy, from)
                     .into_iter()
                     .map(|command| {
-                        PlanStep::new("Select the NVIDIA driver package stream", command)
+                        PlanStep::new("Transition the NVIDIA driver package stream", command)
                     }),
+            );
+        } else {
+            steps.extend(
+                recipe.driver_preparation.into_iter().map(|command| {
+                    PlanStep::new("Select the NVIDIA driver package stream", command)
+                }),
             );
             steps.push(PlanStep::new(
                 format!(
                     "Verify NVIDIA driver package {} is available",
-                    flavor.package()
+                    policy.flavor.package()
                 ),
-                package_manager::query_command(manager, flavor.package()),
+                package_manager::query_command(os.package_manager(), policy.flavor.package()),
             ));
             steps.push(PlanStep::new(
                 "Install the NVIDIA driver",
-                package_manager::install_command_with_options(
-                    manager,
-                    flavor.package(),
-                    other_driver_installed,
-                ),
+                recipe.driver_install,
             ));
         }
-        if install_toolkit && let Some(package) = toolkit_package.as_deref() {
-            steps.push(PlanStep::new(
-                format!("Install {package}"),
-                package_manager::install_command(manager, package),
-            ));
-            steps.push(PlanStep::new(
-                "Verify the CUDA Toolkit with nvcc",
-                toolkit::verification_command(),
-            ));
-        }
+        steps.push(PlanStep::new(
+            "Verify that NVIDIA kernel module metadata is installed",
+            recipe.driver_verification,
+        ));
     }
-    let driver_detail = if install_driver && other_driver_installed {
-        format!("switch to {}", flavor.package())
-    } else if install_driver {
-        format!("install {}", flavor.package())
-    } else {
+    if install_toolkit && let Some(package) = toolkit_package.as_deref() {
+        steps.push(PlanStep::new(
+            format!("Verify CUDA Toolkit package {package} is available"),
+            package_manager::query_command(os.package_manager(), package),
+        ));
+        steps.push(PlanStep::new(
+            format!("Install {package}"),
+            package_manager::install_command(os.package_manager(), package),
+        ));
+        steps.push(PlanStep::new(
+            "Verify the CUDA Toolkit with nvcc",
+            toolkit::verification_command(),
+        ));
+    }
+    let driver_detail = if driver_correct {
         format!(
-            "{} already installed{} — skipped",
-            flavor.package(),
-            status
-                .driver_version
-                .as_deref()
-                .map(|version| format!(" and loaded ({version})"))
+            "{} already managed correctly — skipped",
+            policy.flavor.package()
+        )
+    } else if transition {
+        format!(
+            "transition to {}{}",
+            policy.flavor.package(),
+            policy
+                .branch
+                .map(|b| format!(" pinned to R{b}"))
                 .unwrap_or_default()
         )
-    };
-    let toolkit_detail = match (toolkit_package.as_deref(), install_toolkit) {
-        (Some(package), true) => format!("install {package}"),
-        (Some(_), false) => "requested version already installed — skipped".into(),
-        (None, _) => "not requested".into(),
+    } else {
+        format!(
+            "install {}{}",
+            policy.flavor.package(),
+            policy
+                .branch
+                .map(|b| format!(" pinned to R{b}"))
+                .unwrap_or_default()
+        )
     };
     Ok(OperationPlan {
         title: "NVIDIA Installation Plan".into(),
         details: vec![
             PlanDetail::new("OS", os.display_name()),
-            PlanDetail::new("Package manager", manager.to_string()),
+            PlanDetail::new("Kernel", kernel),
+            PlanDetail::new("Package manager", os.package_manager().to_string()),
             PlanDetail::new("Repository", repository.base_url.clone()),
             PlanDetail::new("Profile", options.profile.label()),
+            PlanDetail::new("Existing driver", status.driver.description()),
             PlanDetail::new("Driver", driver_detail),
-            PlanDetail::new("CUDA Toolkit", toolkit_detail),
             PlanDetail::new(
-                "Kernel headers",
-                if driver::kernel_headers_available() {
-                    "detected for the running kernel"
-                } else {
-                    "not detected; the package manager must install matching headers"
-                },
+                "CUDA Toolkit",
+                toolkit_package
+                    .as_deref()
+                    .map_or("not requested".into(), |p| {
+                        if install_toolkit {
+                            format!("install {p}")
+                        } else {
+                            "requested version already installed — skipped".into()
+                        }
+                    }),
             ),
             PlanDetail::new(
-                "Secure Boot",
-                match driver::secure_boot_enabled() {
-                    Some(true) => "enabled; module signing or key enrollment may be required",
-                    Some(false) => "disabled",
-                    None => "state unavailable",
+                "Kernel headers",
+                if super::driver::kernel_headers_available() {
+                    "detected for running kernel"
+                } else {
+                    "install exact matching prerequisites before driver"
                 },
             ),
         ],
@@ -248,31 +286,43 @@ fn build_plan(
     })
 }
 
-fn toolkit_install_needed(
-    package: &str,
-    current_version: Option<&str>,
-    requested_package_installed: bool,
-) -> bool {
-    if requested_package_installed {
+fn requested_toolkit(options: &InstallOptions) -> Result<Option<String>> {
+    match options.profile {
+        InstallProfile::ModelTraining => Ok(None),
+        InstallProfile::CudaDevelopment => {
+            toolkit::package(options.toolkit_version.as_deref()).map(Some)
+        }
+    }
+}
+fn kernel_release() -> Result<String> {
+    let output = Command::new("uname")
+        .arg("-r")
+        .output()
+        .context("could not determine running kernel")?;
+    anyhow::ensure!(output.status.success(), "uname -r failed");
+    Ok(String::from_utf8_lossy(&output.stdout).trim().into())
+}
+fn toolkit_install_needed(package: &str, current_version: Option<&str>, installed: bool) -> bool {
+    if installed {
         return false;
     }
     if package == "cuda-toolkit" {
         return true;
     }
-    let Some(current_version) = current_version else {
-        return true;
-    };
-    toolkit::versioned_package(current_version)
-        .map(|current_package| current_package != package)
-        .unwrap_or(true)
+    current_version
+        .and_then(|version| toolkit::versioned_package(version).ok())
+        .is_none_or(|current| current != package)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{device::GpuVendor, system::PackageManager};
+    use crate::model::{
+        device::GpuVendor,
+        environment::{DriverPackageScope, ToolkitStatus},
+        system::Distribution,
+    };
     use crate::providers::nvidia::gpu::Generation;
-
     fn os() -> OsInfo {
         OsInfo {
             distribution: Distribution::Ubuntu,
@@ -282,129 +332,141 @@ mod tests {
             is_wsl: false,
         }
     }
-    fn gpu() -> NvidiaGpu {
+    fn gpu(generation: Generation) -> NvidiaGpu {
         NvidiaGpu {
-            name: "NVIDIA GPU".into(),
+            name: "GPU".into(),
             pci_device_id: None,
-            generation: Generation::TuringOrNewer,
+            generation,
         }
     }
-    fn status(driver: Option<&str>, toolkit: Option<&str>) -> ProviderStatus {
+    fn status(driver: DriverInstallation, toolkit_version: Option<&str>) -> ProviderStatus {
         ProviderStatus {
             vendor: GpuVendor::Nvidia,
-            devices: vec![gpu().into()],
-            driver_installed: driver.is_some(),
-            driver_version: driver.map(str::to_owned),
-            toolkits: toolkit
-                .map(|version| crate::model::environment::ToolkitStatus {
+            devices: vec![],
+            driver,
+            driver_version: Some("580.65.06".into()),
+            toolkits: toolkit_version
+                .map(|v| ToolkitStatus {
                     name: "CUDA Toolkit".into(),
-                    version: version.into(),
+                    version: v.into(),
                 })
                 .into_iter()
                 .collect(),
         }
     }
-    fn repository() -> NvidiaRepository {
-        repository::resolve(&os()).unwrap()
+    fn managed(flavor: DriverFlavorState, branch: Option<u32>) -> DriverInstallation {
+        DriverInstallation::Managed {
+            flavor,
+            scope: DriverPackageScope::Full,
+            branch,
+            packages: vec![],
+        }
+    }
+    fn options(profile: InstallProfile, toolkit: Option<&str>) -> InstallOptions {
+        InstallOptions {
+            profile,
+            toolkit_version: toolkit.map(Into::into),
+            driver: DriverPreference::Auto,
+        }
     }
 
     #[test]
-    fn model_training_plan_has_driver_only() {
+    fn matching_modern_install_is_noop() {
         let plan = build_plan(
             &os(),
-            &InstallOptions {
-                profile: InstallProfile::ModelTraining,
-                toolkit_version: None,
-                driver: DriverPreference::Auto,
-            },
-            &[gpu()],
-            &status(None, None),
-            &repository(),
+            &options(InstallProfile::CudaDevelopment, Some("13.1")),
+            "6.8.0-generic",
+            &[gpu(Generation::TuringOrNewer)],
+            &status(managed(DriverFlavorState::Open, None), Some("13.1")),
+            &repository::resolve(&os()).unwrap(),
             true,
-            PackageState::default(),
+            true,
+        )
+        .unwrap();
+        assert!(plan.is_noop());
+    }
+    #[test]
+    fn legacy_plan_pins_r580_and_rejects_cuda_13() {
+        let plan = build_plan(
+            &os(),
+            &options(InstallProfile::CudaDevelopment, Some("12.8")),
+            "6.8.0-generic",
+            &[gpu(Generation::MaxwellPascalVolta)],
+            &status(DriverInstallation::Missing, None),
+            &repository::resolve(&os()).unwrap(),
+            true,
+            false,
+        )
+        .unwrap();
+        assert!(
+            plan.steps
+                .iter()
+                .any(|s| s.command.display().contains("nvidia-driver-pinning-580"))
+        );
+        assert!(
+            build_plan(
+                &os(),
+                &options(InstallProfile::CudaDevelopment, Some("13.1")),
+                "6.8.0-generic",
+                &[gpu(Generation::MaxwellPascalVolta)],
+                &status(DriverInstallation::Missing, None),
+                &repository::resolve(&os()).unwrap(),
+                true,
+                false
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn refuses_working_unmanaged_driver() {
+        let result = build_plan(
+            &os(),
+            &options(InstallProfile::ModelTraining, None),
+            "6.8.0-generic",
+            &[gpu(Generation::TuringOrNewer)],
+            &status(
+                DriverInstallation::Unmanaged {
+                    working: true,
+                    runfile_likely: true,
+                },
+                None,
+            ),
+            &repository::resolve(&os()).unwrap(),
+            true,
+            false,
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("will not install repository packages")
+        );
+    }
+
+    #[test]
+    fn incompatible_managed_driver_is_upgraded_before_toolkit_install() {
+        let mut current = status(managed(DriverFlavorState::Open, None), None);
+        current.driver_version = Some("570.26".into());
+        let plan = build_plan(
+            &os(),
+            &options(InstallProfile::CudaDevelopment, Some("13.3")),
+            "6.8.0-generic",
+            &[gpu(Generation::TuringOrNewer)],
+            &current,
+            &repository::resolve(&os()).unwrap(),
+            true,
+            false,
         )
         .unwrap();
         let commands = plan
             .steps
             .iter()
-            .map(|step| step.command.display())
+            .map(|s| s.command.display())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(commands.contains("nvidia-open"));
-        assert!(!commands.contains("cuda-toolkit"));
-        assert_eq!(os().package_manager(), PackageManager::AptGet);
-    }
-
-    #[test]
-    fn matching_installation_is_a_noop() {
-        let plan = build_plan(
-            &os(),
-            &InstallOptions {
-                profile: InstallProfile::CudaDevelopment,
-                toolkit_version: Some("13.1".into()),
-                driver: DriverPreference::Auto,
-            },
-            &[gpu()],
-            &status(Some("570"), Some("13.1")),
-            &repository(),
-            true,
-            PackageState {
-                open_driver: true,
-                toolkit: true,
-                ..PackageState::default()
-            },
-        )
-        .unwrap();
-        assert!(plan.is_noop());
-    }
-
-    #[test]
-    fn cuda_development_plan_installs_and_verifies_toolkit() {
-        let plan = build_plan(
-            &os(),
-            &InstallOptions {
-                profile: InstallProfile::CudaDevelopment,
-                toolkit_version: Some("13.3".into()),
-                driver: DriverPreference::Auto,
-            },
-            &[gpu()],
-            &status(None, None),
-            &repository(),
-            true,
-            PackageState::default(),
-        )
-        .unwrap();
-        let commands = plan
-            .steps
-            .iter()
-            .map(|step| step.command.display())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(commands.contains("cuda-toolkit-13-3"));
-        assert!(commands.contains("nvidia-open"));
-        assert!(commands.contains("nvcc --version"));
-    }
-
-    #[test]
-    fn unversioned_toolkit_meta_package_is_idempotent() {
-        let plan = build_plan(
-            &os(),
-            &InstallOptions {
-                profile: InstallProfile::CudaDevelopment,
-                toolkit_version: None,
-                driver: DriverPreference::Auto,
-            },
-            &[gpu()],
-            &status(Some("610"), Some("13.3")),
-            &repository(),
-            true,
-            PackageState {
-                open_driver: true,
-                toolkit: true,
-                ..PackageState::default()
-            },
-        )
-        .unwrap();
-        assert!(plan.is_noop());
+        assert!(commands.contains("apt-get install -y nvidia-open"));
+        assert!(
+            commands.find("nvidia-open").unwrap() < commands.find("cuda-toolkit-13-3").unwrap()
+        );
     }
 }

@@ -25,28 +25,35 @@ pub fn resolve(os: &OsInfo) -> Result<NvidiaRepository> {
         Distribution::Ubuntu if matches!(release(&os.version_id), "22.04" | "24.04" | "26.04") => {
             format!("ubuntu{}", release(&os.version_id).replace('.', ""))
         }
-        Distribution::Debian if matches!(major, Some(12 | 13)) => {
-            format!("debian{}", major.unwrap())
+        Distribution::Debian if matches!(os.version_id.as_str(), "12" | "13") => {
+            format!("debian{}", os.version_id)
         }
         Distribution::Rhel | Distribution::AlmaLinux | Distribution::RockyLinux
-            if matches!(major, Some(8..=10)) =>
+            if matches!(os.version_id.as_str(), "8.10" | "9.7" | "10.1") =>
         {
             format!("rhel{}", major.unwrap())
         }
-        Distribution::OracleLinux if matches!(major, Some(8 | 9)) => {
-            format!("rhel{}", major.unwrap())
+        Distribution::OracleLinux if matches!(os.version_id.as_str(), "8" | "9") => {
+            format!("rhel{}", os.version_id)
         }
-        Distribution::Fedora if major == Some(44) => "fedora44".to_owned(),
-        Distribution::AmazonLinux if major == Some(2023) => "amzn2023".to_owned(),
-        Distribution::AzureLinux if major == Some(3) => "azl3".to_owned(),
-        Distribution::OpenSuse if major == Some(15) => "opensuse15".to_owned(),
-        Distribution::OpenSuse if major == Some(16) => "suse16".to_owned(),
-        Distribution::Sles if major == Some(15) => "sles15".to_owned(),
-        Distribution::Sles if major == Some(16) => "suse16".to_owned(),
+        Distribution::Fedora if os.version_id == "44" => "fedora44".to_owned(),
+        Distribution::AmazonLinux if os.version_id == "2023" => "amzn2023".to_owned(),
+        Distribution::AzureLinux if os.version_id == "3.0" => "azl3".to_owned(),
+        Distribution::OpenSuse if os.version_id == "15.6" => "opensuse15".to_owned(),
+        Distribution::OpenSuse if matches!(os.version_id.as_str(), "16" | "16.0") => {
+            "suse16".to_owned()
+        }
+        Distribution::Sles if matches!(os.version_id.as_str(), "15.6" | "15.7") => {
+            "sles15".to_owned()
+        }
+        Distribution::Sles if matches!(os.version_id.as_str(), "16" | "16.0") => {
+            "suse16".to_owned()
+        }
         Distribution::KylinOs
-            if major == Some(11)
-                || os.version_id.to_ascii_uppercase().starts_with('V')
-                    && version_major(&os.version_id[1..]) == Some(11) =>
+            if matches!(
+                os.version_id.to_ascii_uppercase().as_str(),
+                "V11" | "V11 2503"
+            ) =>
         {
             "kylin11".to_owned()
         }
@@ -130,44 +137,56 @@ fn path_contains_repository(path: &Path, base_url: &str) -> Result<bool> {
 }
 
 pub fn setup_commands(manager: PackageManager, repository: &NvidiaRepository) -> Vec<CommandSpec> {
+    let downloader = if command_available("curl") {
+        "curl"
+    } else {
+        "wget"
+    };
+    setup_commands_with_downloader(manager, repository, downloader)
+}
+
+pub fn downloader_available() -> bool {
+    command_available("curl") || command_available("wget")
+}
+
+fn setup_commands_with_downloader(
+    manager: PackageManager,
+    repository: &NvidiaRepository,
+    downloader: &str,
+) -> Vec<CommandSpec> {
     let repo_url = format!("{}cuda-{}.repo", repository.base_url, repository.distro);
     let temporary_path = temporary_download_path(match manager {
         PackageManager::AptGet => CUDA_KEYRING_PACKAGE,
         _ => "cuda.repo",
     });
     let temporary_path = temporary_path.to_string_lossy().into_owned();
+    let download = |url: &str| match downloader {
+        "wget" => CommandSpec::new(
+            "wget",
+            ["--https-only", "--output-document", &temporary_path, url],
+        ),
+        _ => CommandSpec::new(
+            "curl",
+            [
+                "--fail",
+                "--location",
+                "--proto",
+                "=https",
+                "--tlsv1.2",
+                "--output",
+                &temporary_path,
+                url,
+            ],
+        ),
+    };
     match manager {
         PackageManager::AptGet => vec![
-            CommandSpec::new(
-                "curl",
-                [
-                    "--fail",
-                    "--location",
-                    "--proto",
-                    "=https",
-                    "--tlsv1.2",
-                    "--output",
-                    &temporary_path,
-                    &format!("{}{CUDA_KEYRING_PACKAGE}", repository.base_url),
-                ],
-            ),
+            download(&format!("{}{CUDA_KEYRING_PACKAGE}", repository.base_url)),
             CommandSpec::sudo("dpkg", ["-i", &temporary_path]),
             CommandSpec::new("rm", ["-f", &temporary_path]),
         ],
         PackageManager::Dnf | PackageManager::Tdnf => vec![
-            CommandSpec::new(
-                "curl",
-                [
-                    "--fail",
-                    "--location",
-                    "--proto",
-                    "=https",
-                    "--tlsv1.2",
-                    "--output",
-                    &temporary_path,
-                    &repo_url,
-                ],
-            ),
+            download(&repo_url),
             CommandSpec::sudo(
                 "install",
                 [
@@ -179,11 +198,24 @@ pub fn setup_commands(manager: PackageManager, repository: &NvidiaRepository) ->
             ),
             CommandSpec::new("rm", ["-f", &temporary_path]),
         ],
-        PackageManager::Zypper => vec![CommandSpec::sudo(
-            "zypper",
-            ["--non-interactive", "addrepo", &repo_url, "cuda-nvidia"],
-        )],
+        PackageManager::Zypper => vec![
+            CommandSpec::sudo(
+                "zypper",
+                ["--non-interactive", "addrepo", &repo_url, "cuda-nvidia"],
+            ),
+            CommandSpec::sudo(
+                "zypper",
+                ["--gpg-auto-import-keys", "refresh", "cuda-nvidia"],
+            ),
+        ],
     }
+}
+
+fn command_available(program: &str) -> bool {
+    std::process::Command::new(program)
+        .arg("--version")
+        .output()
+        .is_ok()
 }
 
 fn temporary_download_path(file_name: &str) -> PathBuf {
@@ -254,7 +286,7 @@ mod tests {
             (Distribution::OpenSuse, "16", "suse16"),
             (Distribution::Sles, "15.7", "sles15"),
             (Distribution::Sles, "16", "suse16"),
-            (Distribution::KylinOs, "V11", "kylin11"),
+            (Distribution::KylinOs, "V11 2503", "kylin11"),
         ] {
             assert_eq!(
                 resolve(&os(distribution, version)).unwrap().distro,
@@ -266,6 +298,9 @@ mod tests {
     #[test]
     fn rejects_unpublished_release_instead_of_substituting() {
         assert!(resolve(&os(Distribution::Ubuntu, "25.10")).is_err());
+        assert!(resolve(&os(Distribution::Rhel, "9.6")).is_err());
+        assert!(resolve(&os(Distribution::AmazonLinux, "2023.1")).is_err());
+        assert!(resolve(&os(Distribution::AzureLinux, "3.1")).is_err());
     }
 
     #[test]
@@ -283,18 +318,59 @@ mod tests {
     }
 
     #[test]
+    fn covers_every_documented_distribution_architecture_family() {
+        let supported = [
+            (Distribution::Ubuntu, "24.04", "x86_64"),
+            (Distribution::Ubuntu, "24.04", "aarch64"),
+            (Distribution::Debian, "13", "x86_64"),
+            (Distribution::Rhel, "9.7", "x86_64"),
+            (Distribution::Rhel, "9.7", "aarch64"),
+            (Distribution::AlmaLinux, "9.7", "x86_64"),
+            (Distribution::RockyLinux, "9.7", "x86_64"),
+            (Distribution::OracleLinux, "9", "x86_64"),
+            (Distribution::Fedora, "44", "x86_64"),
+            (Distribution::AmazonLinux, "2023", "x86_64"),
+            (Distribution::AmazonLinux, "2023", "aarch64"),
+            (Distribution::AzureLinux, "3.0", "x86_64"),
+            (Distribution::AzureLinux, "3.0", "aarch64"),
+            (Distribution::OpenSuse, "15.6", "x86_64"),
+            (Distribution::Sles, "15.7", "x86_64"),
+            (Distribution::Sles, "15.7", "aarch64"),
+            (Distribution::KylinOs, "V11 2503", "x86_64"),
+            (Distribution::KylinOs, "V11 2503", "aarch64"),
+        ];
+        for (distribution, version, architecture) in supported {
+            let mut value = os(distribution, version);
+            value.architecture = architecture.into();
+            assert!(
+                resolve(&value).is_ok(),
+                "{} {architecture}",
+                value.display_name()
+            );
+        }
+    }
+
+    #[test]
     fn generates_repository_setup_for_each_manager_family() {
         let repository = resolve(&os(Distribution::Ubuntu, "24.04")).unwrap();
-        assert_eq!(setup_commands(PackageManager::AptGet, &repository).len(), 3);
+        assert_eq!(
+            setup_commands_with_downloader(PackageManager::AptGet, &repository, "curl").len(),
+            3
+        );
         assert!(
-            setup_commands(PackageManager::Dnf, &repository)[1]
+            setup_commands_with_downloader(PackageManager::Dnf, &repository, "wget")[0]
+                .display()
+                .contains("wget")
+        );
+        assert!(
+            setup_commands_with_downloader(PackageManager::Dnf, &repository, "curl")[1]
                 .display()
                 .contains("/etc/yum.repos.d/")
         );
         assert!(
-            setup_commands(PackageManager::Zypper, &repository)[0]
+            setup_commands_with_downloader(PackageManager::Zypper, &repository, "curl")[1]
                 .display()
-                .contains("addrepo")
+                .contains("--gpg-auto-import-keys")
         );
     }
 }

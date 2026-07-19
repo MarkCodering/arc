@@ -1,6 +1,10 @@
 use anyhow::Result;
 
-use crate::{providers, ui::output};
+use crate::{
+    cli::{DoctorArgs, UsageProfile},
+    providers::nvidia::diagnostics::{self, DoctorProfile},
+    ui::output,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DoctorOutcome {
@@ -8,13 +12,13 @@ pub enum DoctorOutcome {
     ErrorsFound,
 }
 
-pub fn run() -> Result<DoctorOutcome> {
-    let mut errors = false;
-    for provider in providers::registered() {
-        let diagnostics = provider.diagnose()?;
-        errors |= diagnostics.has_errors();
-        output::diagnostics(&diagnostics);
-    }
+pub fn run(args: DoctorArgs) -> Result<DoctorOutcome> {
+    let diagnostics = diagnostics::detect(match args.profile {
+        UsageProfile::ModelTraining => DoctorProfile::ModelTraining,
+        UsageProfile::CudaDevelopment => DoctorProfile::CudaDevelopment,
+    })?;
+    let errors = diagnostics.has_errors();
+    output::diagnostics(&diagnostics);
     Ok(if errors {
         DoctorOutcome::ErrorsFound
     } else {

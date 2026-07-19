@@ -15,9 +15,16 @@ pub enum Command {
     /// Display the current GPU environment.
     Status,
     /// Diagnose common GPU driver problems.
-    Doctor,
+    Doctor(DoctorArgs),
     /// Plan and remove CUDA Toolkit and NVIDIA driver packages on Ubuntu.
     Uninstall(UninstallArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct DoctorArgs {
+    /// Expected workload; Toolkit absence is normal for model training.
+    #[arg(long, value_enum, default_value_t = UsageProfile::ModelTraining)]
+    pub profile: UsageProfile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]

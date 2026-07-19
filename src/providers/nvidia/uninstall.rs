@@ -4,15 +4,19 @@ use anyhow::{Context, Result, bail};
 
 use crate::{
     model::{
-        environment::ProviderStatus,
+        environment::{DriverInstallation, ProviderStatus},
         operation::{OperationPlan, PlanDetail, PlanStep},
         system::{Distribution, OsInfo},
     },
     platform::package_manager,
 };
 
-const CUDA_TOOLKIT_PACKAGES: &[&str] = &["cuda-toolkit", "cuda-toolkit-*-*"];
-const NVIDIA_DRIVER_PACKAGES: &[&str] = &["cuda-drivers*", "nvidia-open*"];
+const NVIDIA_CUDA_PATTERNS: &[&str] = &[
+    "cuda-*",
+    "nvidia-*",
+    "libnvidia-*",
+    "xserver-xorg-video-nvidia*",
+];
 
 pub fn plan(os: &OsInfo, status: &ProviderStatus) -> Result<OperationPlan> {
     if os.distribution != Distribution::Ubuntu {
@@ -21,41 +25,37 @@ pub fn plan(os: &OsInfo, status: &ProviderStatus) -> Result<OperationPlan> {
             os.display_name()
         );
     }
-    let toolkit_packages = installed_apt_packages(CUDA_TOOLKIT_PACKAGES)?;
-    let driver_packages = installed_apt_packages(NVIDIA_DRIVER_PACKAGES)?;
-    Ok(build_plan(status, toolkit_packages, driver_packages))
+    if matches!(status.driver, DriverInstallation::Unmanaged { .. }) {
+        bail!(
+            "An unmanaged or runfile NVIDIA driver was detected. cudaenv cannot safely uninstall it; use the original NVIDIA installer or migrate it to Ubuntu packages first."
+        );
+    }
+    let packages = installed_apt_packages(NVIDIA_CUDA_PATTERNS)?;
+    Ok(build_plan(status, packages))
 }
 
-fn build_plan(
-    status: &ProviderStatus,
-    toolkit_packages: Vec<String>,
-    driver_packages: Vec<String>,
-) -> OperationPlan {
-    let toolkit_installed = !toolkit_packages.is_empty();
-    let driver_installed = !driver_packages.is_empty();
+fn build_plan(status: &ProviderStatus, packages: Vec<String>) -> OperationPlan {
+    let toolkit_installed = packages
+        .iter()
+        .any(|p| p.starts_with("cuda-") && !p.starts_with("cuda-drivers"));
+    let driver_installed = packages.iter().any(|p| {
+        p.starts_with("nvidia-")
+            || p.starts_with("libnvidia-")
+            || p.starts_with("cuda-drivers")
+            || p.starts_with("xserver-xorg-video-nvidia")
+    });
     let mut steps = Vec::new();
-    if toolkit_installed {
+    if !packages.is_empty() {
         steps.push(PlanStep::new(
-            "Remove the listed CUDA Toolkit packages",
+            "Purge every listed NVIDIA and CUDA package",
             package_manager::apt_remove_command(
-                &["remove", "--purge", "--yes"],
-                &toolkit_packages
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
+                &["purge", "--yes"],
+                &packages.iter().map(String::as_str).collect::<Vec<_>>(),
             ),
         ));
-    }
-    if driver_installed {
         steps.push(PlanStep::new(
-            "Remove the listed NVIDIA driver packages",
-            package_manager::apt_remove_command(
-                &["remove", "--purge", "-V", "--yes"],
-                &driver_packages
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-            ),
+            "Remove dependencies made unnecessary by the purge",
+            crate::model::command::CommandSpec::sudo("apt-get", ["autoremove", "--purge", "--yes"]),
         ));
     }
     OperationPlan {
@@ -79,18 +79,13 @@ fn build_plan(
             ),
             PlanDetail::new(
                 "Exact packages",
-                toolkit_packages
-                    .iter()
-                    .chain(&driver_packages)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                packages.join(", "),
             ),
         ],
         devices: status.devices.clone(),
         steps,
         confirmation_warning:
-            "Only the exact packages listed above will be removed. Dependencies are retained."
+            "Every package above will be purged; apt autoremove will then remove dependencies that are no longer required."
                 .into(),
         completion_message: "Detected CUDA/NVIDIA components were removed.".into(),
         reboot_message: driver_installed
@@ -123,36 +118,37 @@ fn installed_apt_packages(patterns: &[&str]) -> Result<Vec<String>> {
 fn package_matches(pattern: &str, package: &str) -> bool {
     let package = package.split(':').next().unwrap_or(package);
     match pattern {
-        "cuda-toolkit" => package == "cuda-toolkit",
-        "cuda-toolkit-*-*" => numeric_suffix(package, "cuda-toolkit-", 2),
-        "cuda-drivers*" => package == "cuda-drivers" || numeric_suffix(package, "cuda-drivers-", 1),
-        "nvidia-open*" => package == "nvidia-open" || numeric_suffix(package, "nvidia-open-", 1),
+        "cuda-*" => package.starts_with("cuda-"),
+        "nvidia-*" => package.starts_with("nvidia-"),
+        "libnvidia-*" => package.starts_with("libnvidia-"),
+        "xserver-xorg-video-nvidia*" => package.starts_with("xserver-xorg-video-nvidia"),
         _ => false,
     }
-}
-
-fn numeric_suffix(package: &str, prefix: &str, parts: usize) -> bool {
-    let Some(suffix) = package.strip_prefix(prefix) else {
-        return false;
-    };
-    let values = suffix.split('-').collect::<Vec<_>>();
-    values.len() == parts
-        && values
-            .iter()
-            .all(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{device::GpuVendor, environment::ToolkitStatus};
+    use crate::model::{
+        device::GpuVendor,
+        environment::{DriverFlavorState, DriverInstallation, DriverPackageScope, ToolkitStatus},
+    };
+
+    fn managed() -> DriverInstallation {
+        DriverInstallation::Managed {
+            flavor: DriverFlavorState::Open,
+            scope: DriverPackageScope::Full,
+            branch: None,
+            packages: vec!["nvidia-open".into()],
+        }
+    }
 
     #[test]
     fn plan_uses_same_typed_commands_that_will_be_executed() {
         let status = ProviderStatus {
             vendor: GpuVendor::Nvidia,
             devices: vec![],
-            driver_installed: true,
+            driver: managed(),
             driver_version: Some("570".into()),
             toolkits: vec![ToolkitStatus {
                 name: "CUDA Toolkit".into(),
@@ -161,8 +157,7 @@ mod tests {
         };
         let plan = build_plan(
             &status,
-            vec!["cuda-toolkit-13-1".into()],
-            vec!["nvidia-open".into()],
+            vec!["cuda-toolkit-13-1".into(), "nvidia-open".into()],
         );
         assert_eq!(plan.steps.len(), 2);
         assert!(
@@ -171,7 +166,7 @@ mod tests {
                 .display()
                 .contains("cuda-toolkit-13-1")
         );
-        assert!(plan.steps[1].command.display().contains("nvidia-open"));
+        assert!(plan.steps[0].command.display().contains("nvidia-open"));
     }
 
     #[test]
@@ -179,14 +174,14 @@ mod tests {
         let status = ProviderStatus {
             vendor: GpuVendor::Nvidia,
             devices: vec![],
-            driver_installed: false,
+            driver: DriverInstallation::Missing,
             driver_version: None,
             toolkits: vec![ToolkitStatus {
                 name: "CUDA Toolkit".into(),
                 version: "13.1".into(),
             }],
         };
-        let plan = build_plan(&status, vec!["cuda-toolkit-13-1".into()], vec![]);
+        let plan = build_plan(&status, vec!["cuda-toolkit-13-1".into()]);
         let commands = plan
             .steps
             .iter()
@@ -198,14 +193,10 @@ mod tests {
     }
 
     #[test]
-    fn removal_patterns_only_accept_meta_packages() {
-        assert!(package_matches("cuda-toolkit-*-*", "cuda-toolkit-13-1"));
-        assert!(package_matches("cuda-drivers*", "cuda-drivers-610"));
-        assert!(package_matches("nvidia-open*", "nvidia-open"));
-        assert!(!package_matches(
-            "cuda-toolkit-*-*",
-            "cuda-toolkit-13-config-common"
-        ));
-        assert!(!package_matches("nvidia-open*", "nvidia-open-dkms"));
+    fn removal_patterns_cover_complete_nvidia_and_cuda_families() {
+        assert!(package_matches("cuda-*", "cuda-toolkit-13-1"));
+        assert!(package_matches("nvidia-*", "nvidia-open-dkms"));
+        assert!(package_matches("libnvidia-*", "libnvidia-compute-580"));
+        assert!(!package_matches("cuda-*", "cudaenv"));
     }
 }

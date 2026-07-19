@@ -29,7 +29,7 @@ pub fn run(cli: Cli) -> Result<ExitStatus> {
     match cli.command {
         Command::Install(args) => commands::install::run(args).map(|_| ExitStatus::Success),
         Command::Status => commands::status::run().map(|_| ExitStatus::Success),
-        Command::Doctor => commands::doctor::run().map(|outcome| match outcome {
+        Command::Doctor(args) => commands::doctor::run(args).map(|outcome| match outcome {
             commands::doctor::DoctorOutcome::Healthy => ExitStatus::Success,
             commands::doctor::DoctorOutcome::ErrorsFound => ExitStatus::DiagnosticErrors,
         }),

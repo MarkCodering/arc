@@ -15,9 +15,87 @@ pub struct ToolkitStatus {
 pub struct ProviderStatus {
     pub vendor: GpuVendor,
     pub devices: Vec<GpuDevice>,
-    pub driver_installed: bool,
+    pub driver: DriverInstallation,
     pub driver_version: Option<String>,
     pub toolkits: Vec<ToolkitStatus>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriverFlavorState {
+    Open,
+    Proprietary,
+    Mixed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriverPackageScope {
+    Full,
+    ComputeOnly,
+    DesktopOnly,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DriverInstallation {
+    Missing,
+    Managed {
+        flavor: DriverFlavorState,
+        scope: DriverPackageScope,
+        branch: Option<u32>,
+        packages: Vec<String>,
+    },
+    BrokenManaged {
+        flavor: DriverFlavorState,
+        packages: Vec<String>,
+    },
+    Unmanaged {
+        working: bool,
+        runfile_likely: bool,
+    },
+}
+
+impl DriverInstallation {
+    pub fn is_managed(&self) -> bool {
+        matches!(self, Self::Managed { .. } | Self::BrokenManaged { .. })
+    }
+
+    pub fn flavor(&self) -> Option<DriverFlavorState> {
+        match self {
+            Self::Managed { flavor, .. } | Self::BrokenManaged { flavor, .. } => Some(*flavor),
+            Self::Missing | Self::Unmanaged { .. } => None,
+        }
+    }
+
+    pub fn description(&self) -> String {
+        match self {
+            Self::Missing => "not installed".into(),
+            Self::Managed {
+                flavor,
+                scope,
+                branch,
+                ..
+            } => format!(
+                "managed {scope:?} {flavor:?} installation{}",
+                branch
+                    .map(|b| format!(" pinned to R{b}"))
+                    .unwrap_or_default()
+            ),
+            Self::BrokenManaged { flavor, .. } => {
+                format!("broken managed {flavor:?} installation")
+            }
+            Self::Unmanaged {
+                working,
+                runfile_likely,
+            } => format!(
+                "{} unmanaged installation{}",
+                if *working { "working" } else { "broken" },
+                if *runfile_likely {
+                    " (runfile likely)"
+                } else {
+                    ""
+                }
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,7 +185,6 @@ pub enum FixId {
     InstallKernelHeaders,
     InstallDriver,
     RebuildDkms,
-    SecureBootEnrollment,
     ReinstallDriverLibraries,
     InstallToolkit,
     RepairCudaSymlink,
