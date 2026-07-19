@@ -18,10 +18,7 @@ pub fn run(args: InstallArgs) -> Result<()> {
         bail!("No NVIDIA GPU was detected. Check that the GPU is visible and try again.");
     }
 
-    let profile = match args.profile {
-        Some(profile) => profile,
-        None => prompt::select_usage_profile()?,
-    };
+    let profile = resolve_profile(args.profile, args.toolkit.as_deref())?;
     let flavor = driver::select(args.driver, &gpus);
     if os.distribution == os::Distribution::AzureLinux && flavor == DriverFlavor::Proprietary {
         bail!("Azure Linux supports only NVIDIA open kernel modules; use --driver open.");
@@ -31,7 +28,7 @@ pub fn run(args: InstallArgs) -> Result<()> {
     let repository_configured = toolkit::repository_is_configured(&os, &repository)?;
     let toolkit_package = match profile {
         UsageProfile::ModelTraining => None,
-        UsageProfile::CudaDevelopment => Some(toolkit::versioned_package(&args.toolkit_version)?),
+        UsageProfile::CudaDevelopment => Some(toolkit::package(args.toolkit.as_deref())?),
     };
     print_plan(
         &os,
@@ -72,6 +69,17 @@ pub fn run(args: InstallArgs) -> Result<()> {
     }
     println!("Reboot to load the NVIDIA driver.");
     Ok(())
+}
+
+fn resolve_profile(profile: Option<UsageProfile>, toolkit: Option<&str>) -> Result<UsageProfile> {
+    match (profile, toolkit) {
+        (Some(UsageProfile::ModelTraining), Some(_)) => {
+            bail!("--toolkit cannot be used with --profile model-training; choose cuda-development")
+        }
+        (Some(profile), _) => Ok(profile),
+        (None, Some(_)) => Ok(UsageProfile::CudaDevelopment),
+        (None, None) => prompt::select_usage_profile(),
+    }
 }
 
 fn install_command(manager: os::PackageManager, flavor: DriverFlavor) -> CommandSpec {
@@ -191,5 +199,14 @@ mod tests {
         assert!(plan.contains("nvidia-open"));
         assert!(plan.contains("cuda-toolkit-13-3"));
         assert!(plan.contains("nvcc --version"));
+    }
+
+    #[test]
+    fn toolkit_option_selects_cuda_development() {
+        assert_eq!(
+            resolve_profile(None, Some("13.1")).unwrap(),
+            UsageProfile::CudaDevelopment
+        );
+        assert!(resolve_profile(Some(UsageProfile::ModelTraining), Some("13.1")).is_err());
     }
 }

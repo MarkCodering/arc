@@ -22,13 +22,14 @@ cargo test
 ```bash
 cargo run -- install
 cargo run -- install --profile model-training
-cargo run -- install --profile cuda-development --toolkit-version 13.3
+cargo run -- install --profile cuda-development
+cargo run -- install --toolkit 13.1
 cargo run -- install --profile cuda-development --dry-run
 ```
 
 With no `--profile`, `install` asks whether the machine is for model training or
 CUDA development. Model training installs only the NVIDIA driver. CUDA
-development installs the driver and the requested versioned CUDA Toolkit.
+development installs the driver and NVIDIA's latest stable CUDA Toolkit.
 
 Driver flavor selection is automatic. Unidentified GPUs default to open kernel
 modules without another prompt. The optional `--driver` flag can still provide
@@ -36,10 +37,12 @@ an explicit override.
 
 Every install prints the full repository and package command plan first. It asks
 for confirmation unless `--yes` is supplied; `--dry-run` never changes the
-system. For CUDA development, `13.3` becomes the versioned package
-`cuda-toolkit-13-3`; the network repository is configured only when needed,
-package availability is checked before installation, and `nvcc --version`
-verifies the result.
+system. For CUDA development, the unversioned `cuda-toolkit` meta-package tracks
+the latest stable toolkit in NVIDIA's repository. An optional pin such as
+`--toolkit 13.1` selects `cuda-toolkit-13-1` and implies the CUDA development
+profile. The network repository is configured only when needed, package
+availability is checked before installation, and `nvcc --version` verifies the
+result.
 
 Other inspection commands remain available:
 

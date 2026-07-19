@@ -10,6 +10,15 @@ use crate::system::{
 
 const CUDA_KEYRING_PACKAGE: &str = "cuda-keyring_1.1-1_all.deb";
 const CUDA_KEYRING_PATH: &str = "/tmp/cuda-keyring_1.1-1_all.deb";
+const LATEST_TOOLKIT_PACKAGE: &str = "cuda-toolkit";
+
+/// Use NVIDIA's rolling meta-package unless the user explicitly pins X.Y.
+pub fn package(version: Option<&str>) -> Result<String> {
+    match version {
+        Some(version) => versioned_package(version),
+        None => Ok(LATEST_TOOLKIT_PACKAGE.to_owned()),
+    }
+}
 
 pub fn versioned_package(version: &str) -> Result<String> {
     let normalized = version.trim().replace('.', "-");
@@ -205,6 +214,12 @@ mod tests {
         for invalid in ["13", "13.3.0", "latest", "13.x", ""] {
             assert!(versioned_package(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn uses_latest_meta_package_when_version_is_not_pinned() {
+        assert_eq!(package(None).unwrap(), "cuda-toolkit");
+        assert_eq!(package(Some("13.3")).unwrap(), "cuda-toolkit-13-3");
     }
 
     #[test]

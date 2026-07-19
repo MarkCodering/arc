@@ -50,9 +50,9 @@ pub struct InstallArgs {
     /// Installation profile; prompted when omitted.
     #[arg(long, value_enum)]
     pub profile: Option<UsageProfile>,
-    /// CUDA Toolkit version used by the CUDA development profile.
-    #[arg(long, default_value = "13.3")]
-    pub toolkit_version: String,
+    /// Install and pin a CUDA Toolkit version, for example 13.1.
+    #[arg(long)]
+    pub toolkit: Option<String>,
     /// Kernel module flavor to install.
     #[arg(long, value_enum, default_value_t)]
     pub driver: DriverMode,
