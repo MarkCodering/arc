@@ -3,6 +3,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 
 use crate::{
+    cli::UninstallArgs,
     system::os,
     ui::{output, prompt},
 };
@@ -52,7 +53,7 @@ const NVIDIA_DRIVER_PACKAGES: &[&str] = &[
     "xserver-xorg-video-nvidia*",
 ];
 
-pub fn run() -> Result<()> {
+pub fn run(args: UninstallArgs) -> Result<()> {
     let os = os::detect()?;
     if !os.is_supported() {
         bail!(
@@ -63,7 +64,7 @@ pub fn run() -> Result<()> {
 
     output::uninstall_plan(&uninstall_commands());
 
-    if !prompt::confirm_uninstall()? {
+    if !args.yes && !prompt::confirm_uninstall()? {
         println!("\nUninstall cancelled. No changes were made.");
         return Ok(());
     }

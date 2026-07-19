@@ -15,9 +15,7 @@ pub fn run(args: InstallArgs) -> Result<()> {
     os.ensure_driver_installable()?;
     let gpus = gpu::detect()?;
     if gpus.is_empty() {
-        bail!(
-            "No NVIDIA GPU was detected. Check that the GPU is visible and try again."
-        );
+        bail!("No NVIDIA GPU was detected. Check that the GPU is visible and try again.");
     }
 
     let flavor = match driver::select(args.driver, &gpus) {

@@ -16,8 +16,8 @@ pub enum Command {
     Status,
     /// Diagnose common NVIDIA driver problems.
     Doctor,
-    /// Show an uninstall plan without removing anything.
-    Uninstall,
+    /// Plan and remove CUDA Toolkit and NVIDIA driver packages on Ubuntu.
+    Uninstall(UninstallArgs),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -36,6 +36,13 @@ pub struct InstallArgs {
     /// Print the plan without changing the system.
     #[arg(long)]
     pub dry_run: bool,
+    /// Do not ask for final confirmation.
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct UninstallArgs {
     /// Do not ask for final confirmation.
     #[arg(long, short = 'y')]
     pub yes: bool,

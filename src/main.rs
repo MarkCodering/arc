@@ -14,6 +14,6 @@ fn main() -> Result<()> {
         Command::Install(args) => commands::install::run(args),
         Command::Status => commands::status::run(),
         Command::Doctor => commands::doctor::run(),
-        Command::Uninstall => commands::uninstall::run(),
+        Command::Uninstall(args) => commands::uninstall::run(args),
     }
 }

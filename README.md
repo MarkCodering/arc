@@ -41,4 +41,5 @@ Other inspection commands remain available:
 cargo run -- status
 cargo run -- doctor
 cargo run -- uninstall
+cargo run -- uninstall --yes
 ```
