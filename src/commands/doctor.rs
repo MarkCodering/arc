@@ -6,7 +6,7 @@ use crate::{
 };
 
 pub fn run() -> Result<()> {
-    let gpu_detected = gpu::detect()?.is_some();
+    let gpu_detected = !gpu::detect()?.is_empty();
     let driver_installed = driver::detect_version()?.is_some();
     let nvidia_smi_available = driver::nvidia_smi_available();
 

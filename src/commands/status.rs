@@ -7,9 +7,15 @@ use crate::{
 
 pub fn run() -> Result<()> {
     let os = os::detect()?;
-    let gpu = gpu::detect()?;
+    let gpus = gpu::detect()?;
     let driver = driver::detect_version()?;
+    let gpu_summary = (!gpus.is_empty()).then(|| {
+        gpus.iter()
+            .map(|gpu| gpu.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
 
-    output::system_status(&os, gpu.as_deref(), driver.as_deref());
+    output::system_status(&os, gpu_summary.as_deref(), driver.as_deref());
     Ok(())
 }

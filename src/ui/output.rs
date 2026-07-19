@@ -1,28 +1,4 @@
-use crate::{system::os::OsInfo, ui::prompt::UsageProfile};
-
-pub fn installation_plan(
-    gpu: &str,
-    profile: UsageProfile,
-    driver_commands: &[String],
-    toolkit_commands: Option<&[String]>,
-) {
-    println!("GPU:\n{gpu}");
-    println!("\nProfile:\n{}", profile.label());
-    println!("\nInstallation Plan\n");
-    println!("✓ NVIDIA Driver");
-    println!("  Package: Ubuntu recommended NVIDIA driver");
-    print_commands(driver_commands);
-
-    if let Some(commands) = toolkit_commands {
-        println!("\n✓ CUDA Toolkit");
-        println!("  Packages: cuda-keyring, cuda-toolkit");
-        print_commands(commands);
-    } else {
-        println!("\n✗ CUDA Toolkit");
-    }
-
-    println!("\nNo system changes will be made until you confirm.");
-}
+use crate::system::os::OsInfo;
 
 fn print_commands(commands: &[String]) {
     for command in commands {

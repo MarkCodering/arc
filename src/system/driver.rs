@@ -2,6 +2,50 @@ use std::{fs, process::Command};
 
 use anyhow::{Context, Result};
 
+use crate::{
+    cli::DriverMode,
+    system::gpu::{Generation, Gpu},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriverFlavor {
+    Open,
+    Proprietary,
+}
+
+impl DriverFlavor {
+    pub fn package(self) -> &'static str {
+        match self {
+            Self::Open => "nvidia-open",
+            Self::Proprietary => "cuda-drivers",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Selection {
+    Selected(DriverFlavor),
+    NeedsUserChoice,
+}
+
+pub fn select(mode: DriverMode, gpus: &[Gpu]) -> Selection {
+    match mode {
+        DriverMode::Open => Selection::Selected(DriverFlavor::Open),
+        DriverMode::Proprietary => Selection::Selected(DriverFlavor::Proprietary),
+        DriverMode::Auto
+            if gpus
+                .iter()
+                .any(|gpu| gpu.generation == Generation::MaxwellPascalVolta) =>
+        {
+            Selection::Selected(DriverFlavor::Proprietary)
+        }
+        DriverMode::Auto if gpus.iter().any(|gpu| gpu.generation == Generation::Unknown) => {
+            Selection::NeedsUserChoice
+        }
+        DriverMode::Auto => Selection::Selected(DriverFlavor::Open),
+    }
+}
+
 pub fn detect_version() -> Result<Option<String>> {
     if let Some(version) = version_from_nvidia_smi()? {
         return Ok(Some(version));
@@ -62,5 +106,49 @@ mod tests {
     fn parses_proc_driver_version() {
         let input = "NVRM version: NVIDIA UNIX Open Kernel Module  570.86.15  Release Build\n";
         assert_eq!(parse_proc_version(input).as_deref(), Some("570.86.15"));
+    }
+
+    fn gpu(generation: Generation) -> Gpu {
+        Gpu {
+            name: "GPU".into(),
+            pci_device_id: None,
+            generation,
+        }
+    }
+
+    #[test]
+    fn turing_or_newer_selects_open() {
+        assert_eq!(
+            select(DriverMode::Auto, &[gpu(Generation::TuringOrNewer)]),
+            Selection::Selected(DriverFlavor::Open)
+        );
+    }
+
+    #[test]
+    fn old_gpu_falls_back_to_proprietary() {
+        assert_eq!(
+            select(DriverMode::Auto, &[gpu(Generation::MaxwellPascalVolta)]),
+            Selection::Selected(DriverFlavor::Proprietary)
+        );
+    }
+
+    #[test]
+    fn unknown_gpu_requires_user_choice() {
+        assert_eq!(
+            select(DriverMode::Auto, &[gpu(Generation::Unknown)]),
+            Selection::NeedsUserChoice
+        );
+    }
+
+    #[test]
+    fn mixed_generations_use_proprietary() {
+        let gpus = [
+            gpu(Generation::TuringOrNewer),
+            gpu(Generation::MaxwellPascalVolta),
+        ];
+        assert_eq!(
+            select(DriverMode::Auto, &gpus),
+            Selection::Selected(DriverFlavor::Proprietary)
+        );
     }
 }
