@@ -11,6 +11,21 @@ Repository targets are resolved from the exact distribution, release, and CPU
 architecture. If NVIDIA does not publish that exact target, `cudaenv` stops
 instead of borrowing another distribution's repository.
 
+## Install
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/chengpong1127/cudaenv/main/install.sh | sh
+```
+
+The installer puts `cudaenv` in `~/.local/bin` and then asks whether to install
+your CUDA environment. The guided setup lets you choose model training (NVIDIA
+driver only) or CUDA development (driver and CUDA Toolkit), shows the complete
+plan, and asks for confirmation before changing the system.
+
+To install the binary without starting CUDA setup, answer `n` at the prompt and
+run `cudaenv install` later. Set `CUDAENV_INSTALL_DIR` to use a different binary
+directory.
+
 ## Build and test
 
 ```bash
