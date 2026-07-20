@@ -1,38 +1,186 @@
+use std::fmt::Write;
+
+use console::style;
+
 use crate::model::{
     environment::{DiagnosticSection, DiagnosticStatus, Diagnostics, ProviderStatus},
     operation::OperationPlan,
     system::OsInfo,
 };
+use crate::platform::command::ExecutionEvent;
 use crate::providers::nvidia::upgrade::AvailableUpgrades;
 
 pub fn operation_plan(plan: &OperationPlan) {
-    println!("{}\n", plan.title);
+    print!("{}", format_operation_plan(plan));
+}
+
+pub fn format_operation_plan(plan: &OperationPlan) -> String {
+    let mut rendered = String::new();
+    let label_width = plan
+        .details
+        .iter()
+        .map(|detail| detail.label.chars().count())
+        .chain((!plan.devices.is_empty()).then_some("GPU(s)".len()))
+        .max()
+        .unwrap_or(0);
+
+    writeln!(rendered).unwrap();
+    writeln!(
+        rendered,
+        "  {}  {}",
+        style("arc").cyan().bold(),
+        style(&plan.title).bold()
+    )
+    .unwrap();
+    writeln!(rendered, "  {}", style("─".repeat(52)).dim()).unwrap();
+
+    if !plan.details.is_empty() || !plan.devices.is_empty() {
+        writeln!(rendered, "\n  {}", section_label("Environment")).unwrap();
+    }
     for detail in &plan.details {
-        println!("{}: {}", detail.label, detail.value);
+        let padded_label = format!("{:<label_width$}", detail.label);
+        writeln!(
+            rendered,
+            "  {}  {}",
+            style(padded_label).dim(),
+            detail.value
+        )
+        .unwrap();
     }
     if !plan.devices.is_empty() {
-        println!("GPU(s):");
-        for device in &plan.devices {
-            println!("  - {} ({})", device.name, device.vendor);
+        let padded_label = format!("{:<label_width$}", "GPU(s)");
+        let empty_label = " ".repeat(label_width);
+        for (index, device) in plan.devices.iter().enumerate() {
+            let label = if index == 0 {
+                padded_label.as_str()
+            } else {
+                empty_label.as_str()
+            };
+            writeln!(
+                rendered,
+                "  {}  {} {}",
+                style(label).dim(),
+                style("◆").cyan(),
+                format_args!("{} ({})", device.name, device.vendor)
+            )
+            .unwrap();
         }
     }
-    println!("\nCommands:");
+
+    let step_count = match plan.steps.len() {
+        1 => "1 step".to_owned(),
+        count => format!("{count} steps"),
+    };
+    writeln!(
+        rendered,
+        "\n  {}  {}",
+        section_label("Changes"),
+        style(step_count).dim()
+    )
+    .unwrap();
     if plan.steps.is_empty() {
-        println!("  # no changes required");
+        writeln!(
+            rendered,
+            "  {}  {}",
+            style("✓").green().bold(),
+            style("No changes required").green()
+        )
+        .unwrap();
     } else {
-        for step in &plan.steps {
-            println!("  # {}", step.description);
-            println!("  $ {}", step.command.display());
+        for (index, step) in plan.steps.iter().enumerate() {
+            writeln!(
+                rendered,
+                "  {}  {}",
+                style(format!("{:02}", index + 1)).cyan().bold(),
+                style(&step.description).bold()
+            )
+            .unwrap();
+            writeln!(
+                rendered,
+                "      {} {}",
+                style("$").dim(),
+                style(step.command.display()).dim()
+            )
+            .unwrap();
         }
     }
-    println!("{}", plan.confirmation_warning);
+    if !plan.confirmation_warning.is_empty() {
+        writeln!(
+            rendered,
+            "\n  {}  {}\n",
+            style("!").yellow().bold(),
+            style(&plan.confirmation_warning).yellow()
+        )
+        .unwrap();
+    } else {
+        writeln!(rendered).unwrap();
+    }
+
+    rendered
 }
 
 pub fn operation_completed(plan: &OperationPlan) {
-    println!("\n{}", plan.completion_message);
+    println!(
+        "\n  {}  {}",
+        style("✓").green().bold(),
+        style(&plan.completion_message).green().bold()
+    );
     if let Some(message) = &plan.reboot_message {
-        println!("{message}");
+        println!(
+            "  {}  {}",
+            style("↻").yellow().bold(),
+            style(message).yellow()
+        );
     }
+    println!();
+}
+
+pub fn execution_event(event: ExecutionEvent<'_>) {
+    match event {
+        ExecutionEvent::Started {
+            index,
+            total,
+            step,
+        } => {
+            if index == 0 {
+                println!("\n  {}\n", section_label("Applying changes"));
+            }
+            println!(
+                "  {}  {}  {}",
+                style("◆").cyan(),
+                style(format!("{}/{}", index + 1, total)).cyan().bold(),
+                style(&step.description).bold()
+            );
+        }
+        ExecutionEvent::Completed { index, total, step } => println!(
+            "  {}  {}  {}\n",
+            style("✓").green().bold(),
+            style(format!("{}/{}", index + 1, total)).dim(),
+            style(format!("{} complete", step.description)).green()
+        ),
+        ExecutionEvent::Failed { index, total, step } => println!(
+            "  {}  {}  {}\n",
+            style("✗").red().bold(),
+            style(format!("{}/{}", index + 1, total)).dim(),
+            style(format!("{} failed", step.description)).red().bold()
+        ),
+    }
+}
+
+pub fn notice(message: &str) {
+    println!("\n  {}  {}\n", style("•").cyan().bold(), message);
+}
+
+pub fn cancelled(action: &str) {
+    println!(
+        "\n  {}  {} cancelled. No changes were made.\n",
+        style("○").yellow(),
+        action
+    );
+}
+
+fn section_label(label: &str) -> String {
+    style(label.to_uppercase()).cyan().bold().to_string()
 }
 
 pub fn system_status(
@@ -69,7 +217,7 @@ pub fn system_status(
         );
         for toolkit in &status.toolkits {
             println!(
-                "\n{}:\n{}\nPackages: {}\nManageable by cudaenv: {}",
+                "\n{}:\n{}\nPackages: {}\nManageable by arc: {}",
                 toolkit.name,
                 toolkit.version.as_deref().unwrap_or("version unknown"),
                 toolkit.packages.join(", "),
@@ -84,7 +232,7 @@ pub fn system_status(
         }
         if let Some(active) = &status.active_toolkit {
             println!(
-                "\nActive nvcc (informational):\n{}\nPath: {}\nManaged by cudaenv: no",
+                "\nActive nvcc (informational):\n{}\nPath: {}\nManaged by arc: no",
                 active.version.as_deref().unwrap_or("version unknown"),
                 active.executable_path.as_deref().unwrap_or("unknown")
             );
@@ -99,8 +247,6 @@ pub fn diagnostics(diagnostics: &Diagnostics) {
 }
 
 pub fn format_diagnostics(diagnostics: &Diagnostics) -> String {
-    use std::fmt::Write;
-
     let mut rendered = String::new();
     writeln!(rendered, "{} Diagnostics", diagnostics.vendor).unwrap();
     for section in [
@@ -168,7 +314,7 @@ pub fn format_diagnostics(diagnostics: &Diagnostics) -> String {
     }
     writeln!(
         rendered,
-        "\nNo fixes were executed. After completing the plan, rerun `cudaenv doctor`."
+        "\nNo fixes were executed. After completing the plan, rerun `arc doctor`."
     )
     .unwrap();
     rendered
@@ -187,11 +333,50 @@ fn mark(status: DiagnosticStatus) -> &'static str {
 mod tests {
     use super::*;
     use crate::model::{
+        command::CommandSpec,
         device::GpuVendor,
         environment::{
             DiagnosticCheck, DiagnosticId, DiagnosticSection, DiagnosticStatus, FixPlan,
         },
+        operation::{OperationPlan, PlanDetail, PlanStep},
     };
+
+    #[test]
+    fn operation_plan_output_has_a_scannable_hierarchy() {
+        let plan = OperationPlan {
+            title: "NVIDIA Installation Plan".into(),
+            details: vec![PlanDetail::new("OS", "Ubuntu 24.04")],
+            devices: vec![],
+            steps: vec![PlanStep::new(
+                "Install the NVIDIA driver",
+                CommandSpec::sudo("apt-get", ["install", "nvidia-driver"]),
+            )],
+            confirmation_warning: "No changes until confirmation.".into(),
+            completion_message: "Installation completed.".into(),
+            reboot_message: None,
+        };
+
+        let rendered = format_operation_plan(&plan);
+        let output = console::strip_ansi_codes(&rendered);
+
+        for expected in [
+            "arc",
+            "NVIDIA Installation Plan",
+            "ENVIRONMENT",
+            "Ubuntu 24.04",
+            "CHANGES",
+            "1 step",
+            "01",
+            "Install the NVIDIA driver",
+            "$ sudo apt-get install nvidia-driver",
+            "No changes until confirmation.",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing {expected:?} in {output}"
+            );
+        }
+    }
 
     #[test]
     fn diagnostic_output_has_sections_marks_and_rerun_instruction() {
@@ -218,7 +403,7 @@ mod tests {
             "⚠",
             "✗",
             "↷ skipped",
-            "rerun `cudaenv doctor`",
+            "rerun `arc doctor`",
         ] {
             assert!(
                 output.contains(expected),

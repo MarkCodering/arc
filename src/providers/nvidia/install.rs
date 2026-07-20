@@ -89,7 +89,7 @@ fn build_plan(
     } = status.driver
     {
         bail!(
-            "A{} unmanaged NVIDIA driver installation was detected{}. cudaenv will not install repository packages over it. Remove it with its original installer or migrate it to distribution packages first.",
+            "A{} unmanaged NVIDIA driver installation was detected{}. arc will not install repository packages over it. Remove it with its original installer or migrate it to distribution packages first.",
             if working { " working" } else { " broken" },
             if runfile_likely {
                 " (likely installed by the NVIDIA runfile)"
@@ -100,12 +100,12 @@ fn build_plan(
     }
     if matches!(status.driver, DriverInstallation::BrokenManaged { .. }) {
         bail!(
-            "The installed NVIDIA packages are broken or not operational. Run `cudaenv doctor` and repair or remove the managed installation before changing driver flavor or branch."
+            "The installed NVIDIA packages are broken or not operational. Run `arc doctor` and repair or remove the managed installation before changing driver flavor or branch."
         );
     }
     if status.driver.flavor() == Some(DriverFlavorState::Mixed) {
         bail!(
-            "Conflicting open and proprietary NVIDIA packages are installed. Repair or remove the mixed package installation before using cudaenv install."
+            "Conflicting open and proprietary NVIDIA packages are installed. Repair or remove the mixed package installation before using arc install."
         );
     }
     let target_state = match policy.flavor {
@@ -260,14 +260,14 @@ fn build_plan(
             PlanDetail::new(
                 "Release validation",
                 format!(
-                    "repository-compatible {}; NVIDIA validated: {}; cudaenv tested: {}",
+                    "repository-compatible {}; NVIDIA validated: {}; arc tested: {}",
                     repository.family,
                     if repository.nvidia_validated {
                         "yes"
                     } else {
                         "no"
                     },
-                    if repository.cudaenv_tested {
+                    if repository.arc_tested {
                         "yes"
                     } else {
                         "no"

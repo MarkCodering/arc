@@ -2,7 +2,10 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
-use crate::model::{command::CommandSpec, operation::OperationPlan};
+use crate::model::{
+    command::CommandSpec,
+    operation::{OperationPlan, PlanStep},
+};
 
 pub fn normalize_for_current_user(plan: &mut OperationPlan) {
     if !running_as_root() {
@@ -33,7 +36,7 @@ fn ensure_execution_privileges_with(
     }
     if !sudo_available {
         bail!(
-            "This plan requires administrative privileges, but cudaenv is not running as root and sudo is unavailable. Run cudaenv as your normal user after installing sudo, or use a root shell."
+            "This plan requires administrative privileges, but arc is not running as root and sudo is unavailable. Run arc as your normal user after installing sudo, or use a root shell."
         );
     }
     Ok(())
@@ -67,11 +70,38 @@ impl CommandRunner for SystemCommandRunner {
     }
 }
 
-pub fn execute_plan(runner: &impl CommandRunner, plan: &OperationPlan) -> Result<()> {
-    for step in &plan.steps {
-        runner
-            .run(&step.command)
-            .with_context(|| step.description.clone())?;
+#[derive(Clone, Copy, Debug)]
+pub enum ExecutionEvent<'a> {
+    Started {
+        index: usize,
+        total: usize,
+        step: &'a PlanStep,
+    },
+    Completed {
+        index: usize,
+        total: usize,
+        step: &'a PlanStep,
+    },
+    Failed {
+        index: usize,
+        total: usize,
+        step: &'a PlanStep,
+    },
+}
+
+pub fn execute_plan_with_reporter<'a>(
+    runner: &impl CommandRunner,
+    plan: &'a OperationPlan,
+    mut report: impl FnMut(ExecutionEvent<'a>),
+) -> Result<()> {
+    let total = plan.steps.len();
+    for (index, step) in plan.steps.iter().enumerate() {
+        report(ExecutionEvent::Started { index, total, step });
+        if let Err(error) = runner.run(&step.command) {
+            report(ExecutionEvent::Failed { index, total, step });
+            return Err(error).with_context(|| step.description.clone());
+        }
+        report(ExecutionEvent::Completed { index, total, step });
     }
     Ok(())
 }
@@ -110,7 +140,7 @@ mod tests {
         };
         let runner = RecordingRunner::default();
 
-        execute_plan(&runner, &plan).unwrap();
+        execute_plan_with_reporter(&runner, &plan, |_| {}).unwrap();
 
         assert_eq!(*runner.commands.borrow(), vec![expected]);
     }

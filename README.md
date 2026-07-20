@@ -1,40 +1,40 @@
-# cudaenv
+# arc
 
-`cudaenv` makes it easier to set up an NVIDIA GPU environment on Linux. It
+`arc` makes it easier to set up an NVIDIA GPU environment on Linux. It
 detects your GPU and operating system, chooses the appropriate NVIDIA packages,
 shows every planned change, and asks for confirmation before installation.
 
-## Install cudaenv
+## Install arc
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/chengpong1127/cudaenv/main/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/chengpong1127/arc/main/install.sh | sh
 ```
 
-The installer downloads a verified release and places `cudaenv` in
+The installer downloads a verified release and places `arc` in
 `~/.local/bin`. If that directory is not already in your `PATH`, follow the
 instruction printed by the installer.
 
 After installing the command, the script asks whether you want to configure
-your GPU environment immediately. You can answer `n` and run `cudaenv install`
+your GPU environment immediately. You can answer `n` and run `arc install`
 later.
 
 ## Set up your GPU environment
 
 ```bash
-cudaenv install
+arc install
 ```
 
 The guided setup asks what you want to use the machine for:
 
 ```text
-Model training (PyTorch, TensorFlow, JAX)
-CUDA development
+Model training     PyTorch, TensorFlow, or JAX
+CUDA development   Native CUDA apps and custom kernels
 ```
 
 Model training configures the system for frameworks that provide their own CUDA
 runtime. CUDA development also installs the tools needed to compile CUDA code.
 
-Before changing the system, `cudaenv` displays the detected GPU, operating
+Before changing the system, `arc` displays the detected GPU, operating
 system, repository, packages, and commands it plans to use. Nothing is installed
 until you confirm.
 
@@ -42,28 +42,28 @@ Useful installation options:
 
 ```bash
 # Preview the installation without changing the system
-cudaenv install --dry-run
+arc install --dry-run
 
 # Select model training without showing the usage prompt
-cudaenv install --profile model-training
+arc install --profile model-training
 
 # Select CUDA development without showing the usage prompt
-cudaenv install --profile cuda-development
+arc install --profile cuda-development
 
 # Install a specific CUDA version
-cudaenv install --toolkit 13.1
+arc install --toolkit 13.1
 
 # Skip the final confirmation for an unattended installation
-cudaenv install --profile model-training --yes
+arc install --profile model-training --yes
 ```
 
 Driver selection is automatic for recognized GPUs. If the GPU generation cannot
-be identified safely, `cudaenv` asks you to check the GPU and rerun with an
+be identified safely, `arc` asks you to check the GPU and rerun with an
 explicit choice:
 
 ```bash
-cudaenv install --driver open
-cudaenv install --driver proprietary
+arc install --driver open
+arc install --driver proprietary
 ```
 
 The support policy is generation-aware:
@@ -78,7 +78,7 @@ The support policy is generation-aware:
   Volta. Unknown GPUs require an explicit choice, and OS-specific restrictions
   are still enforced.
 
-`cudaenv` detects full, compute-only, desktop-only, branch-pinned, broken, and
+`arc` detects full, compute-only, desktop-only, branch-pinned, broken, and
 unmanaged driver installations. It never installs distribution packages over
 a working runfile or otherwise unmanaged driver; migrate or remove that driver
 with its original installation method first.
@@ -86,16 +86,16 @@ with its original installation method first.
 ## Check the current environment
 
 ```bash
-cudaenv status
+arc status
 ```
 
-`cudaenv status` reports:
+`arc status` reports:
 
 - Detected NVIDIA GPUs
 - Whether an NVIDIA driver package is installed
 - Whether the driver is loaded and operational
 - System package-manager CUDA Toolkit installations and the packages that
-  prove they are manageable by cudaenv
+  prove they are manageable by arc
 - The active `nvcc` version and executable path separately, as informational
   PATH state
 
@@ -105,7 +105,7 @@ installed. Install and upgrade decisions use system package inventory; the
 active compiler can therefore be reported while the system-managed Toolkit is
 reported as absent.
 
-Already-installed components are skipped when you run `cudaenv install` again.
+Already-installed components are skipped when you run `arc install` again.
 
 When repository metadata can be queried reliably, status also reports a newer
 compatible driver or Toolkit version. If metadata is unavailable, it reports
@@ -115,16 +115,16 @@ only installed state and does not claim the system is current.
 
 ```bash
 # Upgrade every supported component that is already installed
-cudaenv upgrade
+arc upgrade
 
 # Select either component, or provide both flags together
-cudaenv upgrade --driver
-cudaenv upgrade --toolkit
-cudaenv upgrade --driver --toolkit
+arc upgrade --driver
+arc upgrade --toolkit
+arc upgrade --driver --toolkit
 
 # Preview the exact plan, or skip confirmation
-cudaenv upgrade --dry-run
-cudaenv upgrade --yes
+arc upgrade --dry-run
+arc upgrade --yes
 ```
 
 “Latest compatible” means the newest candidate published by the configured
@@ -143,7 +143,7 @@ generations and incompatible mixed-generation systems fail safely.
 `--driver` is strictly package-scoped: APT uses `install --only-upgrade` for the
 detected driver package, while DNF, TDNF, and Zypper receive that exact package
 as the update target. Dependencies required by the package manager may change,
-but cudaenv never plans a distribution upgrade or an unrestricted system update
+but arc never plans a distribution upgrade or an unrestricted system update
 as part of a driver-only upgrade.
 
 Exact-version Toolkit installations move to the newest compatible exact Toolkit
@@ -157,10 +157,10 @@ the loaded driver may continue reporting its pre-upgrade version until then.
 ## Diagnose problems
 
 ```bash
-cudaenv doctor
+arc doctor
 
 # Require the CUDA development Toolkit checks
-cudaenv doctor --profile cuda-development
+arc doctor --profile cuda-development
 ```
 
 The doctor checks GPU detection, driver installation, driver runtime health,
@@ -182,7 +182,7 @@ step.
 ## Uninstall
 
 ```bash
-cudaenv uninstall
+arc uninstall
 ```
 
 Uninstall is currently supported only on Ubuntu. It enumerates every installed
@@ -193,19 +193,19 @@ to remove unmanaged or runfile installations automatically.
 To skip the final confirmation:
 
 ```bash
-cudaenv uninstall --yes
+arc uninstall --yes
 ```
 
 ## Supported systems
 
-`cudaenv` resolves only official NVIDIA repository targets. Repository
+`arc` resolves only official NVIDIA repository targets. Repository
 compatibility is separate from NVIDIA's current validation matrix and from the
-releases exercised by cudaenv's maintainers. When NVIDIA publishes one target
+releases exercised by arc's maintainers. When NVIDIA publishes one target
 for a major family (for example `rhel9` or `rhel10`), compatible newer minor
-releases in that same family resolve to it. cudaenv never substitutes a target
+releases in that same family resolve to it. arc never substitutes a target
 from another distribution family.
 
-| Distribution family | Compatible repository releases | NVIDIA validated | Tested by cudaenv | Architectures |
+| Distribution family | Compatible repository releases | NVIDIA validated | Tested by arc | Architectures |
 | --- | --- | --- | --- | --- |
 | Ubuntu | 22.04, 24.04, 26.04 | 22.04, 24.04, 26.04 | 24.04 | x86_64, sbsa |
 | Debian | 12.x, 13.x | 12, 13 | 12, 13 | x86_64 |
@@ -224,10 +224,10 @@ publish, and unsupported CPU architectures are rejected.
 WSL is detected but driver installation inside WSL is intentionally blocked.
 Install the NVIDIA driver on the Windows host; WSL uses the host driver.
 
-Run `cudaenv install` as your normal user. Privileged plan steps use `sudo` when
+Run `arc install` as your normal user. Privileged plan steps use `sudo` when
 available. When already running as root, the displayed and executed commands
 run directly without `sudo`. If neither root privileges nor `sudo` is
-available, cudaenv stops before executing the plan. Status and evidence
+available, arc stops before executing the plan. Status and evidence
 collection remain unprivileged wherever the operating system permits it.
 
 ## Safety

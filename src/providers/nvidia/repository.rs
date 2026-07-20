@@ -26,13 +26,13 @@ struct SupportPolicy {
     releases: ReleaseTargets,
     architectures: &'static [&'static str],
     nvidia_validated: &'static [&'static str],
-    cudaenv_tested: &'static [&'static str],
+    arc_tested: &'static [&'static str],
 }
 
 const X86: &[&str] = &["x86_64"];
 const X86_SBSA: &[&str] = &["x86_64", "sbsa"];
 
-/// Repository compatibility, NVIDIA validation, and cudaenv's own tested
+/// Repository compatibility, NVIDIA validation, and arc's own tested
 /// releases are intentionally represented separately here. Only repository
 /// compatibility controls target resolution.
 const SUPPORT_POLICIES: &[SupportPolicy] = &[
@@ -46,7 +46,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         ]),
         architectures: X86_SBSA,
         nvidia_validated: &["22.04", "24.04", "26.04"],
-        cudaenv_tested: &["24.04"],
+        arc_tested: &["24.04"],
     },
     SupportPolicy {
         label: "Debian",
@@ -54,7 +54,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Major(&[(12, "debian12"), (13, "debian13")]),
         architectures: X86,
         nvidia_validated: &["12", "13"],
-        cudaenv_tested: &["12", "13"],
+        arc_tested: &["12", "13"],
     },
     SupportPolicy {
         label: "RHEL / AlmaLinux / Rocky Linux",
@@ -66,7 +66,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Major(&[(8, "rhel8"), (9, "rhel9"), (10, "rhel10")]),
         architectures: X86_SBSA,
         nvidia_validated: &["8.10", "9.7", "10.1"],
-        cudaenv_tested: &["8.10", "9.7", "10.1"],
+        arc_tested: &["8.10", "9.7", "10.1"],
     },
     SupportPolicy {
         label: "Oracle Linux",
@@ -74,7 +74,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Major(&[(8, "rhel8"), (9, "rhel9")]),
         architectures: X86,
         nvidia_validated: &["8", "9"],
-        cudaenv_tested: &["8", "9"],
+        arc_tested: &["8", "9"],
     },
     SupportPolicy {
         label: "Fedora",
@@ -82,7 +82,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Exact(&[("44", "fedora44")]),
         architectures: X86,
         nvidia_validated: &["44"],
-        cudaenv_tested: &["44"],
+        arc_tested: &["44"],
     },
     SupportPolicy {
         label: "Amazon Linux",
@@ -90,7 +90,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Major(&[(2023, "amzn2023")]),
         architectures: X86_SBSA,
         nvidia_validated: &["2023"],
-        cudaenv_tested: &["2023"],
+        arc_tested: &["2023"],
     },
     SupportPolicy {
         label: "Azure Linux",
@@ -98,7 +98,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Major(&[(3, "azl3")]),
         architectures: X86_SBSA,
         nvidia_validated: &["3.0"],
-        cudaenv_tested: &["3.0"],
+        arc_tested: &["3.0"],
     },
     SupportPolicy {
         label: "openSUSE Leap",
@@ -106,7 +106,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Major(&[(15, "opensuse15"), (16, "suse16")]),
         architectures: X86,
         nvidia_validated: &["15.6", "16.0"],
-        cudaenv_tested: &["15.6", "16.0"],
+        arc_tested: &["15.6", "16.0"],
     },
     SupportPolicy {
         label: "SLES",
@@ -114,7 +114,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Major(&[(15, "sles15"), (16, "suse16")]),
         architectures: X86_SBSA,
         nvidia_validated: &["15.6", "15.7", "16.0"],
-        cudaenv_tested: &["15.6", "15.7", "16.0"],
+        arc_tested: &["15.6", "15.7", "16.0"],
     },
     SupportPolicy {
         label: "KylinOS",
@@ -122,7 +122,7 @@ const SUPPORT_POLICIES: &[SupportPolicy] = &[
         releases: ReleaseTargets::Exact(&[("V11", "kylin11"), ("V11 2503", "kylin11")]),
         architectures: X86_SBSA,
         nvidia_validated: &["V11", "V11 2503"],
-        cudaenv_tested: &["V11 2503"],
+        arc_tested: &["V11 2503"],
     },
 ];
 
@@ -132,7 +132,7 @@ pub struct NvidiaRepository {
     pub base_url: String,
     pub family: String,
     pub nvidia_validated: bool,
-    pub cudaenv_tested: bool,
+    pub arc_tested: bool,
 }
 
 pub fn resolve(os: &OsInfo) -> Result<NvidiaRepository> {
@@ -147,11 +147,11 @@ pub fn resolve(os: &OsInfo) -> Result<NvidiaRepository> {
         })?;
     let distro = resolve_release_target(policy.releases, &os.version_id).ok_or_else(|| {
         anyhow::anyhow!(
-            "NVIDIA does not publish a compatible {} repository target for {}. NVIDIA-validated releases: {}; cudaenv-tested releases: {}. Refusing to substitute another distribution family or release.",
+            "NVIDIA does not publish a compatible {} repository target for {}. NVIDIA-validated releases: {}; arc-tested releases: {}. Refusing to substitute another distribution family or release.",
             policy.label,
             os.display_name(),
             policy.nvidia_validated.join(", "),
-            policy.cudaenv_tested.join(", ")
+            policy.arc_tested.join(", ")
         )
     })?;
     let architecture = match os.architecture.as_str() {
@@ -174,7 +174,7 @@ pub fn resolve(os: &OsInfo) -> Result<NvidiaRepository> {
         base_url,
         family: policy.label.into(),
         nvidia_validated: contains_release(policy.nvidia_validated, &os.version_id),
-        cudaenv_tested: contains_release(policy.cudaenv_tested, &os.version_id),
+        arc_tested: contains_release(policy.arc_tested, &os.version_id),
     })
 }
 
@@ -203,7 +203,7 @@ fn resolve_release_target(targets: ReleaseTargets, version: &str) -> Option<Stri
 #[cfg(test)]
 fn readme_support_table() -> String {
     let mut table = String::from(
-        "| Distribution family | Compatible repository releases | NVIDIA validated | Tested by cudaenv | Architectures |\n| --- | --- | --- | --- | --- |\n",
+        "| Distribution family | Compatible repository releases | NVIDIA validated | Tested by arc | Architectures |\n| --- | --- | --- | --- | --- |\n",
     );
     for policy in SUPPORT_POLICIES {
         let compatible = match policy.releases {
@@ -223,7 +223,7 @@ fn readme_support_table() -> String {
             policy.label,
             compatible,
             policy.nvidia_validated.join(", "),
-            policy.cudaenv_tested.join(", "),
+            policy.arc_tested.join(", "),
             policy.architectures.join(", ")
         ));
     }
@@ -369,7 +369,7 @@ fn temporary_download_path(file_name: &str) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
     base.join(format!(
-        "cudaenv-{}-{nonce}-{file_name}",
+        "arc-{}-{nonce}-{file_name}",
         std::process::id()
     ))
 }
@@ -433,12 +433,12 @@ mod tests {
     fn distinguishes_compatible_validated_and_tested_releases() {
         let validated = resolve(&os(Distribution::Rhel, "9.7")).unwrap();
         assert!(validated.nvidia_validated);
-        assert!(validated.cudaenv_tested);
+        assert!(validated.arc_tested);
 
         let newer_minor = resolve(&os(Distribution::Rhel, "9.8")).unwrap();
         assert_eq!(newer_minor.distro, "rhel9");
         assert!(!newer_minor.nvidia_validated);
-        assert!(!newer_minor.cudaenv_tested);
+        assert!(!newer_minor.arc_tested);
     }
 
     #[test]
