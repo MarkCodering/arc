@@ -1,13 +1,13 @@
 use clap::Parser;
-use cudaenv::cli::Cli;
+use arc::cli::Cli;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    match cudaenv::run(Cli::parse()) {
+    match arc::run(Cli::parse()) {
         Ok(status) => ExitCode::from(status.code()),
         Err(error) => {
-            eprintln!("cudaenv could not complete: {error:#}");
-            ExitCode::from(cudaenv::EXECUTION_FAILURE_EXIT_CODE)
+            eprintln!("arc could not complete: {error:#}");
+            ExitCode::from(arc::EXECUTION_FAILURE_EXIT_CODE)
         }
     }
 }

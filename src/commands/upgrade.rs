@@ -30,21 +30,25 @@ pub fn run(args: UpgradeArgs) -> Result<UpgradeOutcome> {
     output::operation_plan(&plan);
 
     if args.dry_run {
-        println!("\nDry run complete. No changes were made.");
+        output::notice("Dry run complete. No changes were made.");
         return Ok(UpgradeOutcome::Success);
     }
     if plan.is_noop() {
-        println!(
-            "\nNo selected installed component has a compatible upgrade. No changes were made."
+        output::notice(
+            "No selected installed component has a compatible upgrade. No changes were made.",
         );
         return Ok(UpgradeOutcome::Success);
     }
     if !args.yes && !prompt::confirm_upgrade()? {
-        println!("\nUpgrade cancelled. No changes were made.");
+        output::cancelled("Upgrade");
         return Ok(UpgradeOutcome::Success);
     }
     command::ensure_execution_privileges(&plan)?;
-    command::execute_plan(&command::SystemCommandRunner, &plan)?;
+    command::execute_plan_with_reporter(
+        &command::SystemCommandRunner,
+        &plan,
+        output::execution_event,
+    )?;
     output::operation_completed(&plan);
     Ok(UpgradeOutcome::Success)
 }

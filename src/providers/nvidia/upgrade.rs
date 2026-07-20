@@ -394,7 +394,7 @@ pub fn build_plan(
     if driver_changes || toolkit_changes {
         if !current.repository_configured {
             return Err(blocked(
-                "the NVIDIA repository is not configured; use `cudaenv install` to configure a supported repository before upgrading",
+                "the NVIDIA repository is not configured; use `arc install` to configure a supported repository before upgrading",
             ));
         }
         steps.push(PlanStep::new(
@@ -455,7 +455,7 @@ pub fn build_plan(
         let target_dir = format!("/usr/local/cuda-{}", candidate.version);
         if should_update_link(&current.cuda_link, &current.toolkits) {
             steps.push(PlanStep::new(
-                "Update the cudaenv-managed /usr/local/cuda symlink",
+                "Update the arc-managed /usr/local/cuda symlink",
                 CommandSpec::sudo("ln", ["-sfn", &target_dir, "/usr/local/cuda"]),
             ));
         }
@@ -527,7 +527,7 @@ pub fn build_plan(
             PlanDetail::new("Kernel", &current.kernel),
             PlanDetail::new("Package manager", os.package_manager().to_string()),
             PlanDetail::new("Repository", repository.base_url.clone()),
-            PlanDetail::new("Release validation", format!("repository-compatible {}; NVIDIA validated: {}; cudaenv tested: {}", repository.family, if repository.nvidia_validated { "yes" } else { "no" }, if repository.cudaenv_tested { "yes" } else { "no" })),
+            PlanDetail::new("Release validation", format!("repository-compatible {}; NVIDIA validated: {}; arc tested: {}", repository.family, if repository.nvidia_validated { "yes" } else { "no" }, if repository.arc_tested { "yes" } else { "no" })),
             PlanDetail::new("GPU policy", if legacy { "Maxwell/Pascal/Volta: proprietary R580, CUDA 12.x maximum" } else { "Turing or newer: preserve installed flavor, latest compatible branch" }),
             PlanDetail::new("Current driver", format!("{}; {flavor}; {branch}; package version {driver_current}; loaded version {}", current.status.driver.description(), current.status.driver_version.as_deref().unwrap_or("not loaded"))),
             PlanDetail::new("Target driver", driver_detail),
@@ -572,7 +572,7 @@ fn validate_driver_state(os: &OsInfo, current: &UpgradeState, legacy: bool) -> R
         DriverInstallation::Missing => return Ok(()),
         DriverInstallation::Unmanaged { runfile_likely, .. } => {
             return Err(blocked(format!(
-                "{} driver installation detected; migrate it to a supported package-manager installation before `cudaenv upgrade`",
+                "{} driver installation detected; migrate it to a supported package-manager installation before `arc upgrade`",
                 if *runfile_likely {
                     "runfile"
                 } else {
@@ -582,7 +582,7 @@ fn validate_driver_state(os: &OsInfo, current: &UpgradeState, legacy: bool) -> R
         }
         DriverInstallation::BrokenManaged { .. } => {
             return Err(blocked(
-                "the managed driver installation is partial or broken; run `cudaenv doctor` before upgrading",
+                "the managed driver installation is partial or broken; run `arc doctor` before upgrading",
             ));
         }
         DriverInstallation::Managed {
@@ -611,7 +611,7 @@ fn validate_driver_state(os: &OsInfo, current: &UpgradeState, legacy: bool) -> R
     }
     if current.driver_package.is_none() {
         return Err(blocked(
-            "the driver packages could not be mapped to a cudaenv-manageable package",
+            "the driver packages could not be mapped to an arc-manageable package",
         ));
     }
     if current
@@ -651,7 +651,7 @@ fn validate_driver_manageability(current: &UpgradeState) -> Result<()> {
             }
         ))),
         DriverInstallation::BrokenManaged { .. } => Err(blocked(
-            "the managed driver installation is partial or broken; run `cudaenv doctor` before upgrading",
+            "the managed driver installation is partial or broken; run `arc doctor` before upgrading",
         )),
         DriverInstallation::Managed {
             flavor: DriverFlavorState::Mixed,

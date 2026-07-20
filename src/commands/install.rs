@@ -29,19 +29,25 @@ pub fn run(args: InstallArgs) -> Result<()> {
     output::operation_plan(&plan);
 
     if args.dry_run {
-        println!("\nDry run complete. No changes were made.");
+        output::notice("Dry run complete. No changes were made.");
         return Ok(());
     }
     if plan.is_noop() {
-        println!("\nRequested components are already installed. No changes were made.");
+        output::notice(plan.reboot_message.as_deref().unwrap_or(
+            "Requested components are already installed. No changes were made.",
+        ));
         return Ok(());
     }
     if !args.yes && !prompt::confirm_install()? {
-        println!("\nInstallation cancelled. No changes were made.");
+        output::cancelled("Installation");
         return Ok(());
     }
     command::ensure_execution_privileges(&plan)?;
-    command::execute_plan(&command::SystemCommandRunner, &plan)?;
+    command::execute_plan_with_reporter(
+        &command::SystemCommandRunner,
+        &plan,
+        output::execution_event,
+    )?;
     output::operation_completed(&plan);
     Ok(())
 }

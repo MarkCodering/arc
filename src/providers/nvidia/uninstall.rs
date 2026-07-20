@@ -21,13 +21,13 @@ const NVIDIA_CUDA_PATTERNS: &[&str] = &[
 pub fn plan(os: &OsInfo, status: &ProviderStatus) -> Result<OperationPlan> {
     if os.distribution != Distribution::Ubuntu {
         bail!(
-            "cudaenv uninstall supports NVIDIA packages on Ubuntu only (detected {}).",
+            "arc uninstall supports NVIDIA packages on Ubuntu only (detected {}).",
             os.display_name()
         );
     }
     if matches!(status.driver, DriverInstallation::Unmanaged { .. }) {
         bail!(
-            "An unmanaged or runfile NVIDIA driver was detected. cudaenv cannot safely uninstall it; use the original NVIDIA installer or migrate it to Ubuntu packages first."
+            "An unmanaged or runfile NVIDIA driver was detected. arc cannot safely uninstall it; use the original NVIDIA installer or migrate it to Ubuntu packages first."
         );
     }
     let packages = installed_apt_packages(NVIDIA_CUDA_PATTERNS)?;
@@ -209,6 +209,6 @@ mod tests {
         assert!(package_matches("cuda-*", "cuda-toolkit-13-1"));
         assert!(package_matches("nvidia-*", "nvidia-open-dkms"));
         assert!(package_matches("libnvidia-*", "libnvidia-compute-580"));
-        assert!(!package_matches("cuda-*", "cudaenv"));
+        assert!(!package_matches("cuda-*", "arc"));
     }
 }

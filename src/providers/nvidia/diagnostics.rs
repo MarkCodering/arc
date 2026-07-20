@@ -175,12 +175,12 @@ pub fn checks(e: &NvidiaEvidence, profile: DoctorProfile) -> Vec<DiagnosticCheck
         vec![FixId::InspectHardware],
     )];
     let release_warning = repository_state.as_ref().ok().and_then(|repository| {
-        (!repository.nvidia_validated || !repository.cudaenv_tested).then(|| {
+        (!repository.nvidia_validated || !repository.arc_tested).then(|| {
             format!(
-                "Repository-compatible via {}, but this exact release is{} NVIDIA-validated and{} explicitly tested by cudaenv.",
+                "Repository-compatible via {}, but this exact release is{} NVIDIA-validated and{} explicitly tested by arc.",
                 repository.distro,
                 if repository.nvidia_validated { "" } else { " not" },
-                if repository.cudaenv_tested { "" } else { " not" }
+                if repository.arc_tested { "" } else { " not" }
             )
         })
     });
@@ -205,11 +205,11 @@ pub fn checks(e: &NvidiaEvidence, profile: DoctorProfile) -> Vec<DiagnosticCheck
             repository_state.as_ref().map_or_else(
                 |_| "repository target: unavailable".into(),
                 |repository| format!(
-                    "repository target: {}; family: {}; NVIDIA validated: {}; cudaenv tested: {}",
+                    "repository target: {}; family: {}; NVIDIA validated: {}; arc tested: {}",
                     repository.distro,
                     repository.family,
                     yes_no(repository.nvidia_validated),
-                    yes_no(repository.cudaenv_tested)
+                    yes_no(repository.arc_tested)
                 ),
             ),
         ],
@@ -244,7 +244,7 @@ pub fn checks(e: &NvidiaEvidence, profile: DoctorProfile) -> Vec<DiagnosticCheck
         DriverInstallation::Managed { .. } => (DiagnosticStatus::Pass, None),
         DriverInstallation::Missing => (DiagnosticStatus::Error, Some("No managed NVIDIA driver package installation was detected.".into())),
         DriverInstallation::BrokenManaged { .. } => (DiagnosticStatus::Error, Some("NVIDIA packages are installed, but the driver runtime is broken.".into())),
-        DriverInstallation::Unmanaged { working: true, .. } => (DiagnosticStatus::Warning, Some("A working unmanaged driver is present; cudaenv will not overwrite it with repository packages.".into())),
+        DriverInstallation::Unmanaged { working: true, .. } => (DiagnosticStatus::Warning, Some("A working unmanaged driver is present; arc will not overwrite it with repository packages.".into())),
         DriverInstallation::Unmanaged { working: false, .. } => (DiagnosticStatus::Error, Some("An unmanaged driver installation appears broken and must be removed with its original installer.".into())),
     };
     result.push(check(
@@ -557,7 +557,7 @@ fn available_fixes(e: &NvidiaEvidence) -> Result<Vec<Fix>> {
         DriverInstallation::Unmanaged { runfile_likely, .. } => (
             vec![],
             vec![format!(
-                "Do not use cudaenv to overwrite this installation. Repair or remove it with {} and then rerun cudaenv doctor.",
+                "Do not use arc to overwrite this installation. Repair or remove it with {} and then rerun arc doctor.",
                 if *runfile_likely {
                     "the original NVIDIA runfile installer (normally `sudo nvidia-uninstall`)"
                 } else {
@@ -567,7 +567,7 @@ fn available_fixes(e: &NvidiaEvidence) -> Result<Vec<Fix>> {
         ),
         _ => (
             vec![CommandSpec::new(
-                "cudaenv",
+                "arc",
                 ["install", "--profile", "model-training", "--dry-run"],
             )],
             vec![],
@@ -605,7 +605,7 @@ fn available_fixes(e: &NvidiaEvidence) -> Result<Vec<Fix>> {
             FixId::UpgradeDriver,
             "Upgrade the managed NVIDIA driver",
             vec![CommandSpec::new(
-                "cudaenv",
+                "arc",
                 ["install", "--profile", "model-training", "--dry-run"],
             )],
             20,
@@ -629,7 +629,7 @@ fn available_fixes(e: &NvidiaEvidence) -> Result<Vec<Fix>> {
             FixId::InstallToolkit,
             "Install or repair the CUDA Toolkit",
             vec![CommandSpec::new(
-                "cudaenv",
+                "arc",
                 ["install", "--profile", "cuda-development", "--dry-run"],
             )],
             50,
@@ -697,31 +697,9 @@ fn managed_driver_repair_commands(
 }
 
 fn managed_package_reinstall_commands(os: &OsInfo, packages: &[String]) -> Vec<CommandSpec> {
-    if packages.is_empty() {
-        return vec![];
-    }
-    let package_refs = packages.iter().map(String::as_str);
-    let command = match os.package_manager() {
-        crate::model::system::PackageManager::AptGet => CommandSpec::sudo(
-            "apt-get",
-            ["install", "--reinstall", "-y"]
-                .into_iter()
-                .chain(package_refs),
-        ),
-        crate::model::system::PackageManager::Dnf => {
-            CommandSpec::sudo("dnf", ["reinstall", "-y"].into_iter().chain(package_refs))
-        }
-        crate::model::system::PackageManager::Tdnf => {
-            CommandSpec::sudo("tdnf", ["reinstall", "-y"].into_iter().chain(package_refs))
-        }
-        crate::model::system::PackageManager::Zypper => CommandSpec::sudo(
-            "zypper",
-            ["--non-interactive", "install", "--force"]
-                .into_iter()
-                .chain(package_refs),
-        ),
-    };
-    vec![command]
+    package_manager::reinstall_command(os.package_manager(), packages)
+        .into_iter()
+        .collect()
 }
 
 fn cuda_symlink_repair(e: &NvidiaEvidence) -> (Vec<CommandSpec>, Vec<String>) {
@@ -1016,7 +994,7 @@ mod tests {
         );
         assert!(commands.contains("linux-headers-6.8.0-generic"));
         assert!(commands.contains("dkms autoinstall -k 6.8.0-generic"));
-        assert!(!commands.contains("cudaenv install"));
+        assert!(!commands.contains("arc install"));
         assert!(
             diagnostics
                 .fix_plan

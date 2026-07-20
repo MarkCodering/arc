@@ -16,16 +16,20 @@ pub fn run(args: UninstallArgs) -> Result<()> {
     let mut plan = uninstall::plan(&system, &status)?;
     command::normalize_for_current_user(&mut plan);
     if plan.is_noop() {
-        println!("No installed CUDA Toolkit or NVIDIA driver was detected.");
+        output::notice("No installed CUDA Toolkit or NVIDIA driver was detected.");
         return Ok(());
     }
     output::operation_plan(&plan);
     if !args.yes && !prompt::confirm_uninstall()? {
-        println!("\nUninstall cancelled. No changes were made.");
+        output::cancelled("Uninstall");
         return Ok(());
     }
     command::ensure_execution_privileges(&plan)?;
-    command::execute_plan(&command::SystemCommandRunner, &plan)?;
+    command::execute_plan_with_reporter(
+        &command::SystemCommandRunner,
+        &plan,
+        output::execution_event,
+    )?;
     output::operation_completed(&plan);
     Ok(())
 }

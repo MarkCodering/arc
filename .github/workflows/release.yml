@@ -44,14 +44,14 @@ jobs:
         run: cargo build --locked --release --target "${{ matrix.target }}"
       - name: Package
         run: |
-          tar -C "target/${{ matrix.target }}/release" -czf "cudaenv-${{ matrix.target }}.tar.gz" cudaenv
-          sha256sum "cudaenv-${{ matrix.target }}.tar.gz" > "cudaenv-${{ matrix.target }}.tar.gz.sha256"
+          tar -C "target/${{ matrix.target }}/release" -czf "arc-${{ matrix.target }}.tar.gz" arc
+          sha256sum "arc-${{ matrix.target }}.tar.gz" > "arc-${{ matrix.target }}.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: cudaenv-${{ matrix.target }}
+          name: arc-${{ matrix.target }}
           path: |
-            cudaenv-${{ matrix.target }}.tar.gz
-            cudaenv-${{ matrix.target }}.tar.gz.sha256
+            arc-${{ matrix.target }}.tar.gz
+            arc-${{ matrix.target }}.tar.gz.sha256
 
   publish:
     name: Publish GitHub release
